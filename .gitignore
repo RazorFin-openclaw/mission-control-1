@@ -35,6 +35,7 @@ aegis/
 # Playwright
 test-results/
 playwright-report/
+.tmp/
 
 # Claude Code context files
 CLAUDE.md
