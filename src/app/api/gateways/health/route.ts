@@ -60,6 +60,35 @@ function isBlockedUrl(urlStr: string): boolean {
   }
 }
 
+function buildGatewayProbeUrl(host: string, port: number): string | null {
+  const rawHost = String(host || '').trim()
+  if (!rawHost) return null
+
+  const hasProtocol =
+    rawHost.startsWith('ws://') ||
+    rawHost.startsWith('wss://') ||
+    rawHost.startsWith('http://') ||
+    rawHost.startsWith('https://')
+
+  if (hasProtocol) {
+    try {
+      const parsed = new URL(rawHost)
+      if (parsed.protocol === 'ws:') parsed.protocol = 'http:'
+      if (parsed.protocol === 'wss:') parsed.protocol = 'https:'
+      if (!parsed.port && Number.isFinite(port) && port > 0) {
+        parsed.port = String(port)
+      }
+      if (!parsed.pathname) parsed.pathname = '/'
+      return parsed.toString()
+    } catch {
+      return null
+    }
+  }
+
+  if (!Number.isFinite(port) || port <= 0) return null
+  return `http://${rawHost}:${port}/`
+}
+
 /**
  * POST /api/gateways/health - Server-side health probe for all gateways
  * Probes gateways from the server where loopback addresses are reachable.
@@ -82,7 +111,11 @@ export async function POST(request: NextRequest) {
   const results: HealthResult[] = []
 
   for (const gw of gateways) {
-    const probeUrl = "http://" + gw.host + ":" + gw.port + "/"
+    const probeUrl = buildGatewayProbeUrl(gw.host, gw.port)
+    if (!probeUrl) {
+      results.push({ id: gw.id, name: gw.name, status: 'error', latency: null, agents: [], sessions_count: 0, error: 'Invalid gateway address' })
+      continue
+    }
 
     if (isBlockedUrl(probeUrl)) {
       results.push({ id: gw.id, name: gw.name, status: 'error', latency: null, agents: [], sessions_count: 0, error: 'Blocked URL' })
