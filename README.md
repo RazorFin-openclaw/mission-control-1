@@ -24,7 +24,7 @@ Manage agent fleets, track tasks, monitor costs, and orchestrate workflows — a
 
 Running AI agents at scale means juggling sessions, tasks, costs, and reliability across multiple models and channels. Mission Control gives you:
 
-- **32 panels** — Tasks, agents, skills, logs, tokens, memory, cron, alerts, webhooks, pipelines, and more
+- **31 panels** — Tasks, agents, skills, logs, tokens, memory, cron, alerts, webhooks, pipelines, and more
 - **Real-time everything** — WebSocket + SSE push updates, smart polling that pauses when you're away
 - **Zero external dependencies** — SQLite database, single `pnpm start` to run, no Redis/Postgres/Docker required
 - **Role-based access** — Viewer, operator, and admin roles with session + API key auth
@@ -94,10 +94,10 @@ If `AUTH_PASS` contains `#`, quote it (e.g. `AUTH_PASS="my#password"`) or use `A
 ## Features
 
 ### Agent Management
-Monitor agent status, spawn new sessions, view heartbeats, and manage the full agent lifecycle from registration to retirement.
+Monitor agent status, configure models, view heartbeats, and manage the full agent lifecycle from registration to retirement. Agent detail modal with compact overview, inline model selector, and editable sub-agent configuration.
 
 ### Task Board
-Kanban board with six columns (inbox → backlog → todo → in-progress → review → done), drag-and-drop, priority levels, assignments, and threaded comments.
+Kanban board with six columns (inbox → assigned → in progress → review → quality review → done), drag-and-drop, priority levels, assignments, threaded comments, and inline sub-agent spawning.
 
 ### Real-time Monitoring
 Live activity feed, session inspector, and log viewer with filtering. WebSocket connection to OpenClaw gateway for instant event delivery.
@@ -165,7 +165,7 @@ mission-control/
 │   ├── components/
 │   │   ├── layout/            # NavRail, HeaderBar, LiveFeed
 │   │   ├── dashboard/         # Overview dashboard
-│   │   ├── panels/            # 32 feature panels
+│   │   ├── panels/            # 31 feature panels
 │   │   └── chat/              # Agent chat UI
 │   ├── lib/
 │   │   ├── auth.ts            # Session + API key auth, RBAC
@@ -201,7 +201,7 @@ mission-control/
 | Real-time | WebSocket + Server-Sent Events |
 | Auth | scrypt hashing, session tokens, RBAC |
 | Validation | Zod 4 |
-| Testing | Vitest (143 unit) + Playwright (295 E2E) |
+| Testing | Vitest (165 unit) + Playwright (295 E2E) |
 
 ## Authentication
 
