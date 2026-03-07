@@ -408,6 +408,44 @@ export const db_helpers = {
   },
 
   /**
+   * Get unread + undelivered notifications for heartbeat pull (prevents stale replay).
+   */
+  getPendingHeartbeatNotifications: (recipient: string, workspaceId: number = 1): Notification[] => {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      SELECT * FROM notifications
+      WHERE recipient = ?
+        AND read_at IS NULL
+        AND delivered_at IS NULL
+        AND workspace_id = ?
+      ORDER BY created_at DESC
+    `);
+
+    return stmt.all(recipient, workspaceId) as Notification[];
+  },
+
+  /**
+   * Mark notifications as delivered after heartbeat fetch.
+   */
+  markNotificationsDelivered: (ids: number[], workspaceId: number = 1): number => {
+    if (!ids.length) return 0;
+
+    const db = getDatabase();
+    const now = Math.floor(Date.now() / 1000);
+    const placeholders = ids.map(() => '?').join(',');
+    const stmt = db.prepare(`
+      UPDATE notifications
+      SET delivered_at = ?
+      WHERE id IN (${placeholders})
+        AND delivered_at IS NULL
+        AND workspace_id = ?
+    `);
+
+    const result = stmt.run(now, ...ids, workspaceId);
+    return result.changes;
+  },
+
+  /**
    * Mark notification as read
    */
   markNotificationRead: (notificationId: number, workspaceId: number = 1) => {

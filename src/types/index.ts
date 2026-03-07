@@ -13,6 +13,7 @@ export interface Session {
   tokens: string
   flags: string[]
   active: boolean
+  agent?: string
   label?: string
   currentTask?: string
   lastActivity?: number

@@ -71,45 +71,79 @@ export async function GET(
       });
     }
     
-    // 2. Check for assigned tasks
+    // 2. Check for assigned tasks (split for explicit actionability contract)
     const assignedTasks = db.prepare(`
       SELECT * FROM tasks 
       WHERE assigned_to = ?
       AND workspace_id = ?
       AND status IN ('assigned', 'in_progress')
       ORDER BY priority DESC, created_at ASC
-      LIMIT 10
-    `).all(agent.name, workspaceId);
-    
-    if (assignedTasks.length > 0) {
+      LIMIT 20
+    `).all(agent.name, workspaceId) as any[];
+
+    const assignedOnly = assignedTasks.filter((t) => t.status === 'assigned');
+    const inProgress = assignedTasks.filter((t) => t.status === 'in_progress');
+    const mapTask = (t: any) => ({
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      priority: t.priority,
+      due_date: t.due_date
+    });
+
+    if (assignedOnly.length > 0) {
       workItems.push({
         type: 'assigned_tasks',
-        count: assignedTasks.length,
-        items: assignedTasks.map((t: any) => ({
-          id: t.id,
-          title: t.title,
-          status: t.status,
-          priority: t.priority,
-          due_date: t.due_date
-        }))
+        count: assignedOnly.length,
+        items: assignedOnly.map(mapTask)
+      });
+    }
+
+    if (inProgress.length > 0) {
+      workItems.push({
+        type: 'in_progress_tasks',
+        count: inProgress.length,
+        items: inProgress.map(mapTask)
       });
     }
     
-    // 3. Check for unread notifications
-    const notifications = db_helpers.getUnreadNotifications(agent.name, workspaceId);
-    
-    if (notifications.length > 0) {
+    // 3. Check unread + undelivered notifications and enrich with task/comment IDs
+    const pendingNotifications = db_helpers.getPendingHeartbeatNotifications(agent.name, workspaceId);
+
+    const notificationItems = pendingNotifications.slice(0, 20).map((n: any) => {
+      let task_id: number | null = null;
+      let comment_id: number | null = null;
+
+      if (n.source_type === 'task') {
+        task_id = n.source_id;
+      }
+
+      if (n.source_type === 'comment') {
+        comment_id = n.source_id;
+        const commentRow = db.prepare('SELECT task_id FROM comments WHERE id = ? AND workspace_id = ?').get(n.source_id, workspaceId) as any;
+        task_id = commentRow?.task_id ?? null;
+      }
+
+      return {
+        id: n.id,
+        type: n.type,
+        title: n.title,
+        message: n.message,
+        created_at: n.created_at,
+        task_id,
+        comment_id
+      };
+    });
+
+    if (notificationItems.length > 0) {
       workItems.push({
         type: 'notifications',
-        count: notifications.length,
-        items: notifications.slice(0, 5).map(n => ({
-          id: n.id,
-          type: n.type,
-          title: n.title,
-          message: n.message,
-          created_at: n.created_at
-        }))
+        count: notificationItems.length,
+        items: notificationItems
       });
+
+      // Mark this batch as delivered to avoid replaying stale notifications in next heartbeat.
+      db_helpers.markNotificationsDelivered(notificationItems.map((n: any) => n.id), workspaceId);
     }
     
     // 4. Check for urgent activities that might need attention
@@ -150,11 +184,22 @@ export async function GET(
       workspaceId
     );
     
+    const assignedTasksItem = workItems.find((w) => w.type === 'assigned_tasks');
+    const inProgressTasksItem = workItems.find((w) => w.type === 'in_progress_tasks');
+    const hasActionableWork = Boolean(
+      (assignedTasksItem?.count ?? 0) > 0 ||
+      (inProgressTasksItem?.count ?? 0) > 0 ||
+      workItems.some((w) => w.type === 'mentions' || w.type === 'notifications' || w.type === 'urgent_activities')
+    );
+
     if (workItems.length === 0) {
       return NextResponse.json({
         status: 'HEARTBEAT_OK',
         agent: agent.name,
         checked_at: now,
+        assigned_tasks: [],
+        in_progress_tasks: [],
+        has_actionable_work: false,
         message: 'No work items found'
       });
     }
@@ -163,6 +208,9 @@ export async function GET(
       status: 'WORK_ITEMS_FOUND',
       agent: agent.name,
       checked_at: now,
+      assigned_tasks: assignedTasksItem?.items ?? [],
+      in_progress_tasks: inProgressTasksItem?.items ?? [],
+      has_actionable_work: hasActionableWork,
       work_items: workItems,
       total_items: workItems.reduce((sum, item) => sum + item.count, 0)
     });

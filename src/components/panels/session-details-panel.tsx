@@ -28,8 +28,65 @@ export function SessionDetailsPanel() {
 
   const [controllingSession, setControllingSession] = useState<string | null>(null)
   const [sessionFilter, setSessionFilter] = useState<'all' | 'active' | 'idle'>('all')
+  const [agentFilter, setAgentFilter] = useState<string>('all')
+  const [classFilter, setClassFilter] = useState<string>('all')
   const [sortBy, setSortBy] = useState<'age' | 'tokens' | 'model'>('age')
   const [expandedSession, setExpandedSession] = useState<string | null>(null)
+
+  const classifySession = (sessionKey: string) => {
+    if (sessionKey.includes(':main:main')) return 'main'
+    if (sessionKey.includes(':subagent:')) return 'subagent'
+    if (sessionKey.includes(':cron:') && sessionKey.includes(':run:')) return 'cron-run'
+    if (sessionKey.includes(':cron:')) return 'cron-base'
+    if (sessionKey.includes(':slack:direct:')) return 'slack-direct'
+    if (sessionKey.includes(':slack:channel:') && sessionKey.includes(':thread:')) return 'slack-thread'
+    if (sessionKey.includes(':slack:channel:')) return 'slack-channel'
+    if (sessionKey.includes(':group:')) return 'group'
+    return 'other'
+  }
+
+  const getSessionClassDisplay = (kind: string) => {
+    switch (kind) {
+      case 'main': return 'Main'
+      case 'subagent': return 'Sub-agent'
+      case 'cron-base': return 'Cron Base'
+      case 'cron-run': return 'Cron Run'
+      case 'slack-direct': return 'Slack DM'
+      case 'slack-channel': return 'Slack Channel'
+      case 'slack-thread': return 'Slack Thread'
+      case 'group': return 'Group'
+      default: return 'Other'
+    }
+  }
+
+  const getDecodedSessionContext = (session: any) => {
+    const key = session.key || ''
+
+    if (key.includes(':slack:direct:')) {
+      const userId = key.split(':slack:direct:')[1]?.split(':')[0]
+      return userId ? `DM with ${userId}` : 'Slack direct message context'
+    }
+
+    if (key.includes(':slack:channel:')) {
+      const channelId = key.split(':slack:channel:')[1]?.split(':')[0]
+      const threadTs = key.includes(':thread:') ? key.split(':thread:')[1] : null
+      const channelDisplay = channelId || 'unknown-channel'
+      if (threadTs) return `Slack thread in ${channelDisplay}`
+      return `Slack channel ${channelDisplay}`
+    }
+
+    if (key.includes(':cron:') && key.includes(':run:')) {
+      const jobId = key.split(':cron:')[1]?.split(':')[0]
+      return jobId ? `Cron run for job ${jobId}` : 'Cron run instance'
+    }
+
+    if (key.includes(':cron:')) {
+      const jobId = key.split(':cron:')[1]?.split(':')[0]
+      return jobId ? `Cron base session for job ${jobId}` : 'Cron base session'
+    }
+
+    return null
+  }
 
   const getModelInfo = (modelName: string) => {
     const matchedAlias = availableModels
@@ -99,12 +156,22 @@ export function SessionDetailsPanel() {
     }
   }
 
+  const uniqueAgents = Array.from(new Set(sessions.map(s => s.agent).filter(Boolean))).sort()
+  const sessionClasses = Array.from(new Set(sessions.map(s => classifySession(s.key)))).sort()
+
   const filteredSessions = sessions.filter(session => {
-    switch (sessionFilter) {
-      case 'active': return session.active
-      case 'idle': return !session.active
-      default: return true
-    }
+    const matchesStatus = (() => {
+      switch (sessionFilter) {
+        case 'active': return session.active
+        case 'idle': return !session.active
+        default: return true
+      }
+    })()
+
+    const matchesAgent = agentFilter === 'all' || session.agent === agentFilter
+    const matchesClass = classFilter === 'all' || classifySession(session.key) === classFilter
+
+    return matchesStatus && matchesAgent && matchesClass
   })
 
   const sortedSessions = [...filteredSessions].sort((a, b) => {
@@ -157,6 +224,40 @@ export function SessionDetailsPanel() {
                 <option value="all">All Sessions</option>
                 <option value="active">Active Only</option>
                 <option value="idle">Idle Only</option>
+              </select>
+            </div>
+
+            {/* Filter by Agent */}
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-2">
+                Agent
+              </label>
+              <select
+                value={agentFilter}
+                onChange={(e) => setAgentFilter(e.target.value)}
+                className="px-3 py-2 border border-border rounded-md bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+              >
+                <option value="all">All Agents</option>
+                {uniqueAgents.map(agent => (
+                  <option key={agent} value={agent}>{agent}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filter by Session Class */}
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-2">
+                Class
+              </label>
+              <select
+                value={classFilter}
+                onChange={(e) => setClassFilter(e.target.value)}
+                className="px-3 py-2 border border-border rounded-md bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+              >
+                <option value="all">All Classes</option>
+                {sessionClasses.map(cls => (
+                  <option key={cls} value={cls}>{getSessionClassDisplay(cls)}</option>
+                ))}
               </select>
             </div>
 
@@ -224,12 +325,19 @@ export function SessionDetailsPanel() {
                             <div className="flex items-center space-x-2 text-sm text-muted-foreground">
                               <span>{getSessionType(session.key)}</span>
                               <span>•</span>
+                              <span>{getSessionClassDisplay(classifySession(session.key))}</span>
+                              <span>•</span>
                               <span className={getStatusColor(status)}>
                                 {status.charAt(0).toUpperCase() + status.slice(1)}
                               </span>
                               <span>•</span>
                               <span>{session.age}</span>
                             </div>
+                            {getDecodedSessionContext(session) && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {getDecodedSessionContext(session)}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -279,6 +387,14 @@ export function SessionDetailsPanel() {
                             <div>
                               <span className="text-muted-foreground">Kind:</span> 
                               <span className="ml-2 text-foreground">{session.kind}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Class:</span> 
+                              <span className="ml-2 text-foreground">{getSessionClassDisplay(classifySession(session.key))}</span>
+                            </div>
+                            <div className="col-span-2">
+                              <span className="text-muted-foreground">Context:</span> 
+                              <span className="ml-2 text-foreground">{getDecodedSessionContext(session) || 'n/a'}</span>
                             </div>
                             <div>
                               <span className="text-muted-foreground">ID:</span> 

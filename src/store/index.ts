@@ -14,6 +14,7 @@ export interface Session {
   tokens: string
   flags: string[]
   active: boolean
+  agent?: string
   startTime?: number
   lastActivity?: number
   messageCount?: number

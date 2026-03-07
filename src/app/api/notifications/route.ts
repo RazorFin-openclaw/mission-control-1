@@ -135,8 +135,8 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * PUT /api/notifications - Mark notifications as read
- * Body: { ids: number[] } or { recipient: string } (mark all as read)
+ * PUT /api/notifications - Mark notifications as read/acknowledged
+ * Body: { ids: number[], action?: 'read'|'ack' } or { recipient: string, markAllRead: true, action?: 'read'|'ack' }
  */
 export async function PUT(request: NextRequest) {
   const auth = requireRole(request, 'operator');
@@ -149,8 +149,12 @@ export async function PUT(request: NextRequest) {
     const db = getDatabase();
     const workspaceId = auth.user.workspace_id ?? 1;
     const body = await request.json();
-    const { ids, recipient, markAllRead } = body;
-    
+    const { ids, recipient, markAllRead, action = 'read' } = body;
+
+    if (action !== 'read' && action !== 'ack') {
+      return NextResponse.json({ error: 'action must be "read" or "ack"' }, { status: 400 });
+    }
+
     const now = Math.floor(Date.now() / 1000);
     
     if (markAllRead && recipient) {
@@ -164,8 +168,9 @@ export async function PUT(request: NextRequest) {
       const result = stmt.run(now, recipient, workspaceId);
       
       return NextResponse.json({ 
-        success: true, 
-        markedAsRead: result.changes 
+        success: true,
+        action,
+        marked: result.changes 
       });
     } else if (ids && Array.isArray(ids)) {
       // Mark specific notifications as read
@@ -179,8 +184,9 @@ export async function PUT(request: NextRequest) {
       const result = stmt.run(now, ...ids, workspaceId);
       
       return NextResponse.json({ 
-        success: true, 
-        markedAsRead: result.changes 
+        success: true,
+        action,
+        marked: result.changes 
       });
     } else {
       return NextResponse.json({ 

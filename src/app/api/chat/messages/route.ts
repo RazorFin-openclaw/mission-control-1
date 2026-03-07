@@ -393,12 +393,12 @@ export async function POST(request: NextRequest) {
                     'call',
                     'agent.wait',
                     '--timeout',
-                    '8000',
+                    '125000',
                     '--params',
-                    JSON.stringify({ runId: forwardInfo.runId, timeoutMs: 6000 }),
+                    JSON.stringify({ runId: forwardInfo.runId, timeoutMs: 120000 }),
                     '--json',
                   ],
-                  { timeoutMs: 9000 }
+                  { timeoutMs: 125000 }
                 )
 
                 const waitPayload = parseGatewayJson(waitResult.stdout)

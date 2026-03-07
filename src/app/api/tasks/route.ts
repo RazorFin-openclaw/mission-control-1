@@ -6,6 +6,11 @@ import { mutationLimiter } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { validateBody, createTaskSchema, bulkUpdateTaskStatusSchema } from '@/lib/validation';
 
+function isAegisApprovalRequired(): boolean {
+  const raw = String(process.env.REQUIRE_AEGIS_APPROVAL_FOR_DONE ?? 'true').trim().toLowerCase()
+  return !['0', 'false', 'no', 'off'].includes(raw)
+}
+
 function hasAegisApproval(db: ReturnType<typeof getDatabase>, taskId: number, workspaceId: number): boolean {
   const review = db.prepare(`
     SELECT status FROM quality_reviews
@@ -232,7 +237,7 @@ export async function PUT(request: NextRequest) {
         const oldTask = db.prepare('SELECT * FROM tasks WHERE id = ? AND workspace_id = ?').get(task.id, workspaceId) as Task;
         if (!oldTask) continue;
 
-        if (task.status === 'done' && !hasAegisApproval(db, task.id, workspaceId)) {
+        if (task.status === 'done' && isAegisApprovalRequired() && !hasAegisApproval(db, task.id, workspaceId)) {
           throw new Error(`Aegis approval required for task ${task.id}`)
         }
 

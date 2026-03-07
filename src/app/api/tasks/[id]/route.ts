@@ -6,6 +6,11 @@ import { mutationLimiter } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { validateBody, updateTaskSchema } from '@/lib/validation';
 
+function isAegisApprovalRequired(): boolean {
+  const raw = String(process.env.REQUIRE_AEGIS_APPROVAL_FOR_DONE ?? 'true').trim().toLowerCase()
+  return !['0', 'false', 'no', 'off'].includes(raw)
+}
+
 function hasAegisApproval(
   db: ReturnType<typeof getDatabase>,
   taskId: number,
@@ -124,7 +129,7 @@ export async function PUT(
       updateParams.push(description);
     }
     if (status !== undefined) {
-      if (status === 'done' && !hasAegisApproval(db, taskId, workspaceId)) {
+      if (status === 'done' && isAegisApprovalRequired() && !hasAegisApproval(db, taskId, workspaceId)) {
         return NextResponse.json(
           { error: 'Aegis approval is required to move task to done.' },
           { status: 403 }

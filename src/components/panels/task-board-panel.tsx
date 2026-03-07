@@ -169,6 +169,9 @@ export function TaskBoardPanel() {
   }
 
   const { updateTask } = useMissionControl()
+  const requireAegisApprovalForDone = !['0', 'false', 'no', 'off'].includes(
+    String(process.env.NEXT_PUBLIC_REQUIRE_AEGIS_APPROVAL_FOR_DONE ?? 'true').trim().toLowerCase()
+  )
 
   const handleDrop = async (e: React.DragEvent, newStatus: string) => {
     e.preventDefault()
@@ -183,7 +186,7 @@ export function TaskBoardPanel() {
     const previousStatus = draggedTask.status
 
     try {
-      if (newStatus === 'done') {
+      if (newStatus === 'done' && requireAegisApprovalForDone) {
         const reviewResponse = await fetch(`/api/quality-review?taskId=${draggedTask.id}`)
         if (!reviewResponse.ok) {
           throw new Error('Unable to verify Aegis approval')
@@ -341,9 +344,12 @@ export function TaskBoardPanel() {
                   }`}
                 >
                   <div className="flex justify-between items-start mb-2">
-                    <h4 className="text-foreground font-medium text-sm leading-tight">
-                      {task.title}
-                    </h4>
+                    <div className="min-w-0">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">#{task.id}</div>
+                      <h4 className="text-foreground font-medium text-sm leading-tight">
+                        {task.title}
+                      </h4>
+                    </div>
                     <div className="flex items-center gap-2">
                       {task.aegisApproved && (
                         <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-700 text-emerald-100">
@@ -615,7 +621,10 @@ function TaskDetailModal({
       <div className="bg-card border border-border rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="p-6">
           <div className="flex justify-between items-start mb-4">
-            <h3 className="text-xl font-bold text-foreground">{task.title}</h3>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Task #{task.id}</div>
+              <h3 className="text-xl font-bold text-foreground">{task.title}</h3>
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={() => onEdit(task)}
