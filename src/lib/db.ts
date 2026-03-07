@@ -435,7 +435,24 @@ export const db_helpers = {
       WHERE recipient = ? AND read_at IS NULL AND workspace_id = ?
       ORDER BY created_at DESC
     `);
-    
+
+    return stmt.all(recipient, workspaceId) as Notification[];
+  },
+
+  /**
+   * Get unread + undelivered notifications to avoid stale replay in heartbeat payloads
+   */
+  getPendingNotifications: (recipient: string, workspaceId: number = 1): Notification[] => {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      SELECT * FROM notifications
+      WHERE recipient = ?
+      AND read_at IS NULL
+      AND delivered_at IS NULL
+      AND workspace_id = ?
+      ORDER BY created_at DESC
+    `);
+
     return stmt.all(recipient, workspaceId) as Notification[];
   },
 
