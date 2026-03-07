@@ -1,27 +1,49 @@
+import { eventBus } from '@/lib/event-bus'
+import { queryPendingAssignments } from './adapter'
 import type { FrameworkAdapter, AgentRegistration, HeartbeatPayload, TaskReport, Assignment } from './adapter'
 
 export class LangGraphAdapter implements FrameworkAdapter {
   readonly framework = 'langgraph'
 
   async register(agent: AgentRegistration): Promise<void> {
-    // TODO: implement LangGraph agent registration
-    console.warn(`[langgraph] adapter not yet fully implemented; agent ${agent.agentId} registered as stub`)
+    eventBus.broadcast('agent.created', {
+      id: agent.agentId,
+      name: agent.name,
+      framework: this.framework,
+      status: 'online',
+      ...(agent.metadata ?? {}),
+    })
   }
 
-  async heartbeat(_payload: HeartbeatPayload): Promise<void> {
-    // TODO: implement LangGraph heartbeat
+  async heartbeat(payload: HeartbeatPayload): Promise<void> {
+    eventBus.broadcast('agent.status_changed', {
+      id: payload.agentId,
+      status: payload.status,
+      metrics: payload.metrics ?? {},
+      framework: this.framework,
+    })
   }
 
-  async reportTask(_report: TaskReport): Promise<void> {
-    // TODO: implement LangGraph task reporting
+  async reportTask(report: TaskReport): Promise<void> {
+    eventBus.broadcast('task.updated', {
+      id: report.taskId,
+      agentId: report.agentId,
+      progress: report.progress,
+      status: report.status,
+      output: report.output,
+      framework: this.framework,
+    })
   }
 
-  async getAssignments(_agentId: string): Promise<Assignment[]> {
-    // TODO: implement LangGraph assignment retrieval
-    return []
+  async getAssignments(agentId: string): Promise<Assignment[]> {
+    return queryPendingAssignments(agentId)
   }
 
-  async disconnect(_agentId: string): Promise<void> {
-    // TODO: implement LangGraph disconnect
+  async disconnect(agentId: string): Promise<void> {
+    eventBus.broadcast('agent.status_changed', {
+      id: agentId,
+      status: 'offline',
+      framework: this.framework,
+    })
   }
 }

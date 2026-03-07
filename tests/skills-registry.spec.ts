@@ -55,6 +55,18 @@ test.describe('Skills Registry', () => {
     expect(Array.isArray(body.skills)).toBe(true)
   })
 
+  test('GET awesome-openclaw search returns structured result', async ({ request }) => {
+    const res = await request.get('/api/skills/registry?source=awesome-openclaw&q=git', {
+      headers: API_KEY_HEADER,
+    })
+    expect(res.status()).toBe(200)
+    const body = await res.json()
+    expect(body).toHaveProperty('skills')
+    expect(body).toHaveProperty('total')
+    expect(body.source).toBe('awesome-openclaw')
+    expect(Array.isArray(body.skills)).toBe(true)
+  })
+
   // ── POST /api/skills/registry (install) ───────
 
   test('POST rejects missing source', async ({ request }) => {

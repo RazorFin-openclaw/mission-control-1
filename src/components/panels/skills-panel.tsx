@@ -75,14 +75,29 @@ export function SkillsPanel() {
   const [createError, setCreateError] = useState<string | null>(null)
   const [isMounted, setIsMounted] = useState(false)
   const [activeTab, setActiveTab] = useState<PanelTab>('installed')
-  const [registrySource, setRegistrySource] = useState<'clawhub' | 'skills-sh'>('clawhub')
+  const [registrySource, setRegistrySource] = useState<'clawhub' | 'skills-sh' | 'awesome-openclaw'>('clawhub')
   const [registryQuery, setRegistryQuery] = useState('')
   const [registryResults, setRegistryResults] = useState<RegistrySkill[]>([])
   const [registryLoading, setRegistryLoading] = useState(false)
   const [registryError, setRegistryError] = useState<string | null>(null)
+  const [registrySearched, setRegistrySearched] = useState(false)
   const [installTarget, setInstallTarget] = useState('user-agents')
   const [installing, setInstalling] = useState<string | null>(null)
   const [installMessage, setInstallMessage] = useState<string | null>(null)
+  const [scanAll, setScanAll] = useState<{
+    running: boolean
+    total: number
+    done: number
+    current: string | null
+    results: { clean: number; warning: number; rejected: number; error: number }
+  } | null>(null)
+  const [installModal, setInstallModal] = useState<{
+    slug: string
+    name: string
+    step: 'fetching' | 'scanning' | 'writing' | 'done' | 'error'
+    message?: string
+    securityStatus?: string
+  } | null>(null)
 
   useEffect(() => {
     setIsMounted(true)
@@ -264,6 +279,7 @@ export function SkillsPanel() {
       const body = await res.json()
       if (!res.ok) throw new Error(body?.error || 'Search failed')
       setRegistryResults(body?.skills || [])
+      setRegistrySearched(true)
     } catch (err: any) {
       setRegistryError(err?.message || 'Search failed')
     } finally {
@@ -271,27 +287,39 @@ export function SkillsPanel() {
     }
   }
 
-  const installSkill = async (slug: string) => {
+  const installSkill = async (slug: string, skillName?: string) => {
+    const displayName = skillName || slug.split('/').pop() || slug
     setInstalling(slug)
     setInstallMessage(null)
+    setInstallModal({ slug, name: displayName, step: 'fetching' })
     try {
+      // Simulate step progression — the API does fetch+scan+write in one call,
+      // so we show intermediate steps on a timer for UX feedback
+      const stepTimer = setTimeout(() => {
+        setInstallModal(prev => prev?.slug === slug ? { ...prev, step: 'scanning' } : prev)
+      }, 800)
+      const writeTimer = setTimeout(() => {
+        setInstallModal(prev => prev?.slug === slug ? { ...prev, step: 'writing' } : prev)
+      }, 1600)
+
       const res = await fetch('/api/skills/registry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source: registrySource, slug, targetRoot: installTarget }),
       })
       const body = await res.json()
+      clearTimeout(stepTimer)
+      clearTimeout(writeTimer)
+
       if (!res.ok) {
         const msg = body?.message || body?.error || 'Install failed'
-        setInstallMessage(`Failed: ${msg}`)
+        setInstallModal({ slug, name: displayName, step: 'error', message: msg, securityStatus: body?.securityReport?.status })
       } else {
-        setInstallMessage(body?.message || 'Installed successfully')
+        setInstallModal({ slug, name: displayName, step: 'done', message: body?.message || 'Installed successfully', securityStatus: body?.securityReport?.status })
         await loadSkills()
       }
-      setTimeout(() => setInstallMessage(null), 5000)
     } catch (err: any) {
-      setInstallMessage(`Install error: ${err?.message}`)
-      setTimeout(() => setInstallMessage(null), 5000)
+      setInstallModal({ slug, name: displayName, step: 'error', message: err?.message || 'Network error' })
     } finally {
       setInstalling(null)
     }
@@ -306,6 +334,47 @@ export function SkillsPanel() {
         await loadSkills() // refresh to pick up updated security_status
       }
     } catch { /* best-effort */ }
+  }
+
+  const scanAllSkills = async () => {
+    const skills = data?.skills || []
+    if (skills.length === 0) return
+    const state = {
+      running: true,
+      total: skills.length,
+      done: 0,
+      current: null as string | null,
+      results: { clean: 0, warning: 0, rejected: 0, error: 0 },
+    }
+    setScanAll({ ...state })
+
+    for (const skill of skills) {
+      state.current = skill.name
+      setScanAll({ ...state })
+      try {
+        const params = new URLSearchParams({ mode: 'check', source: skill.source, name: skill.name })
+        const res = await fetch(`/api/skills?${params.toString()}`, { cache: 'no-store' })
+        const body = await res.json()
+        if (res.ok && body?.security) {
+          const s = body.security.status as string
+          if (s === 'clean') state.results.clean++
+          else if (s === 'warning') state.results.warning++
+          else if (s === 'rejected') state.results.rejected++
+          else state.results.clean++
+        } else {
+          state.results.error++
+        }
+      } catch {
+        state.results.error++
+      }
+      state.done++
+      setScanAll({ ...state })
+    }
+
+    state.running = false
+    state.current = null
+    setScanAll({ ...state })
+    await loadSkills()
   }
 
   const securityBadge = (status?: string | null) => {
@@ -353,18 +422,80 @@ export function SkillsPanel() {
 
       {activeTab === 'installed' && (
         <>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter installed skills..."
-            className="h-9 w-full rounded-md border border-border bg-secondary/50 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
-          />
+          <div className="relative">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/50" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="7" cy="7" r="4.5" />
+              <path d="M10.5 10.5L14 14" />
+            </svg>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Quick find installed skills..."
+              className="h-9 w-full rounded-md border border-border bg-secondary/50 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/40"
+            />
+            {query && (
+              <button
+                onClick={() => setQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-foreground text-xs"
+                title="Clear"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          {query && (
+            <div className="text-2xs text-muted-foreground">
+              Showing {filtered.length} of {data?.total || 0} skills matching &quot;{query}&quot;
+            </div>
+          )}
 
           <div className="rounded-lg border border-border bg-card p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div className="text-xs text-muted-foreground">Bidirectional disk sync active (scheduler every 60s)</div>
-              <Button variant="outline" size="xs" onClick={refresh} disabled={loading || saving}>Refresh Now</Button>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="outline"
+                  size="xs"
+                  onClick={scanAllSkills}
+                  disabled={loading || saving || !!scanAll?.running}
+                >
+                  {scanAll?.running ? `Scanning ${scanAll.done}/${scanAll.total}...` : 'Scan All'}
+                </Button>
+                <Button variant="outline" size="xs" onClick={refresh} disabled={loading || saving}>Refresh Now</Button>
+              </div>
             </div>
+
+            {/* Scan All progress / results */}
+            {scanAll && (
+              <div className="space-y-2">
+                {scanAll.running && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-2xs text-muted-foreground">
+                      <span>Scanning: <span className="text-foreground font-medium">{scanAll.current}</span></span>
+                      <span>{scanAll.done}/{scanAll.total}</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all duration-300"
+                        style={{ width: `${(scanAll.done / scanAll.total) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                {!scanAll.running && (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 text-2xs">
+                      <span className="text-emerald-400">{scanAll.results.clean} clean</span>
+                      {scanAll.results.warning > 0 && <span className="text-amber-400">{scanAll.results.warning} warning</span>}
+                      {scanAll.results.rejected > 0 && <span className="text-rose-400">{scanAll.results.rejected} rejected</span>}
+                      {scanAll.results.error > 0 && <span className="text-destructive">{scanAll.results.error} errors</span>}
+                      <span className="text-muted-foreground">— {scanAll.total} skills scanned</span>
+                    </div>
+                    <button onClick={() => setScanAll(null)} className="text-2xs text-muted-foreground/50 hover:text-foreground">dismiss</button>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-[240px_1fr_auto] gap-2">
               <select
                 value={createSource}
@@ -474,11 +605,12 @@ export function SkillsPanel() {
             <div className="flex items-center gap-2">
               <select
                 value={registrySource}
-                onChange={(e) => setRegistrySource(e.target.value as 'clawhub' | 'skills-sh')}
+                onChange={(e) => { setRegistrySource(e.target.value as 'clawhub' | 'skills-sh' | 'awesome-openclaw'); setRegistryResults([]); setRegistrySearched(false) }}
                 className="h-9 rounded-md border border-border bg-secondary/50 px-2 text-xs text-foreground"
               >
                 <option value="clawhub">ClawdHub</option>
                 <option value="skills-sh">skills.sh</option>
+                <option value="awesome-openclaw">Awesome OpenClaw</option>
               </select>
               <input
                 value={registryQuery}
@@ -518,7 +650,7 @@ export function SkillsPanel() {
           {registryResults.length > 0 ? (
             <div className="rounded-lg border border-border bg-card overflow-hidden">
               <div className="px-4 py-3 border-b border-border text-xs text-muted-foreground">
-                {registryResults.length} results from {registrySource === 'clawhub' ? 'ClawdHub' : 'skills.sh'}
+                {registryResults.length} results from {{ clawhub: 'ClawdHub', 'skills-sh': 'skills.sh', 'awesome-openclaw': 'Awesome OpenClaw' }[registrySource]}
               </div>
               <div className="divide-y divide-border">
                 {registryResults.map((skill) => (
@@ -534,7 +666,7 @@ export function SkillsPanel() {
                       <Button
                         variant="default"
                         size="xs"
-                        onClick={() => installSkill(skill.slug)}
+                        onClick={() => installSkill(skill.slug, skill.name)}
                         disabled={installing === skill.slug}
                       >
                         {installing === skill.slug ? 'Installing...' : 'Install'}
@@ -558,12 +690,107 @@ export function SkillsPanel() {
             </div>
           ) : registryLoading ? (
             <div className="rounded-lg border border-border bg-card px-4 py-6 text-sm text-muted-foreground">Searching...</div>
+          ) : registrySearched ? (
+            <div className="rounded-lg border border-border bg-card px-4 py-6 text-sm text-muted-foreground">
+              No results found for &quot;{registryQuery}&quot; on {{ clawhub: 'ClawdHub', 'skills-sh': 'skills.sh', 'awesome-openclaw': 'Awesome OpenClaw' }[registrySource]}. Try a different query or switch registries.
+            </div>
           ) : (
             <div className="rounded-lg border border-border bg-card px-4 py-6 text-sm text-muted-foreground">
-              Search ClawdHub or skills.sh to discover and install agent skills.
+              Search ClawdHub, skills.sh, or Awesome OpenClaw to discover and install agent skills.
             </div>
           )}
         </>
+      )}
+
+      {isMounted && installModal && createPortal(
+        <div className="fixed inset-0 z-[130]">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="w-full max-w-md bg-card border border-border rounded-lg shadow-2xl overflow-hidden">
+              <div className="px-5 pt-5 pb-4">
+                <h3 className="text-sm font-semibold text-foreground">
+                  {installModal.step === 'done' ? 'Skill Installed' : installModal.step === 'error' ? 'Install Failed' : 'Installing Skill'}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-1 truncate">{installModal.name}</p>
+              </div>
+
+              <div className="px-5 pb-5 space-y-3">
+                {/* Progress steps */}
+                <div className="space-y-2">
+                  <InstallStep
+                    label="Fetching SKILL.md from registry"
+                    status={installModal.step === 'fetching' ? 'active' : installModal.step === 'error' && !installModal.securityStatus ? 'error' : 'done'}
+                  />
+                  <InstallStep
+                    label="Running security scan"
+                    status={
+                      installModal.step === 'fetching' ? 'pending'
+                        : installModal.step === 'scanning' ? 'active'
+                        : installModal.step === 'error' && installModal.securityStatus === 'rejected' ? 'error'
+                        : installModal.step === 'error' && !installModal.securityStatus ? 'error'
+                        : 'done'
+                    }
+                  />
+                  <InstallStep
+                    label="Writing to disk & registering"
+                    status={
+                      ['fetching', 'scanning'].includes(installModal.step) ? 'pending'
+                        : installModal.step === 'writing' ? 'active'
+                        : installModal.step === 'error' ? 'error'
+                        : 'done'
+                    }
+                  />
+                </div>
+
+                {/* Result message */}
+                {installModal.message && (installModal.step === 'done' || installModal.step === 'error') && (
+                  <div className={`rounded-md border px-3 py-2 text-xs ${
+                    installModal.step === 'error'
+                      ? 'bg-destructive/10 border-destructive/30 text-destructive'
+                      : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                  }`}>
+                    {installModal.message}
+                  </div>
+                )}
+
+                {/* Security badge */}
+                {installModal.securityStatus && installModal.step === 'done' && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-muted-foreground">Security:</span>
+                    <span className={
+                      installModal.securityStatus === 'clean' ? 'text-emerald-400'
+                        : installModal.securityStatus === 'warning' ? 'text-amber-400'
+                        : 'text-rose-400'
+                    }>{installModal.securityStatus}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              {(installModal.step === 'done' || installModal.step === 'error') && (
+                <div className="px-5 py-3 border-t border-border flex items-center justify-end gap-2">
+                  {installModal.step === 'done' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { setInstallModal(null); setActiveTab('installed') }}
+                    >
+                      View Installed
+                    </Button>
+                  )}
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => setInstallModal(null)}
+                  >
+                    {installModal.step === 'done' ? 'Done' : 'Close'}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
       {isMounted && selectedSkill && createPortal(
@@ -627,6 +854,39 @@ export function SkillsPanel() {
         </div>,
         document.body
       )}
+    </div>
+  )
+}
+
+function InstallStep({ label, status }: { label: string; status: 'pending' | 'active' | 'done' | 'error' }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <div className="w-5 h-5 flex items-center justify-center shrink-0">
+        {status === 'pending' && (
+          <span className="w-2 h-2 rounded-full bg-muted-foreground/30" />
+        )}
+        {status === 'active' && (
+          <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+        )}
+        {status === 'done' && (
+          <svg className="w-4 h-4 text-emerald-400" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3.5 8.5L6.5 11.5L12.5 4.5" />
+          </svg>
+        )}
+        {status === 'error' && (
+          <svg className="w-4 h-4 text-destructive" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4.5 4.5L11.5 11.5M11.5 4.5L4.5 11.5" />
+          </svg>
+        )}
+      </div>
+      <span className={`text-xs ${
+        status === 'active' ? 'text-foreground font-medium'
+          : status === 'done' ? 'text-muted-foreground'
+          : status === 'error' ? 'text-destructive'
+          : 'text-muted-foreground/50'
+      }`}>
+        {label}
+      </span>
     </div>
   )
 }

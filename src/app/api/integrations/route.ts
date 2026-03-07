@@ -663,8 +663,27 @@ async function handleTest(
         break
       }
 
-      default:
-        return NextResponse.json({ error: 'Test not implemented for this integration' }, { status: 400 })
+      default: {
+        // Generic connectivity test: attempt a HEAD request to known base URLs
+        const baseUrls: Record<string, string> = {
+          nvidia: 'https://api.nvidia.com',
+          moonshot: 'https://api.moonshot.cn',
+          brave: 'https://api.search.brave.com',
+          linkedin: 'https://api.linkedin.com',
+          ollama: resolveOllamaBaseUrl(),
+          gateway: String(process.env.OPENCLAW_GATEWAY_URL || '').trim() || '',
+        }
+        const url = baseUrls[integration.id]
+        if (url) {
+          const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+          result = res.ok || res.status < 500
+            ? { ok: true, detail: `Reachable (HTTP ${res.status})` }
+            : { ok: false, detail: `Unreachable (HTTP ${res.status})` }
+        } else {
+          return NextResponse.json({ ok: false, detail: 'No test available — configure the integration URL to enable testing' })
+        }
+        break
+      }
     }
 
     const ipAddress = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown'

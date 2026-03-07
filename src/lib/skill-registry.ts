@@ -1,5 +1,5 @@
 /**
- * Skill Registry Client — Proxied search & install for ClawdHub and skills.sh
+ * Skill Registry Client — Proxied search & install for ClawdHub, skills.sh, and Awesome OpenClaw
  *
  * All external requests are server-side only (no direct browser→registry calls).
  * Includes content validation and security scanning on download.
@@ -16,7 +16,7 @@ import { logger } from './logger'
 // Types
 // ---------------------------------------------------------------------------
 
-export type RegistrySource = 'clawhub' | 'skills-sh'
+export type RegistrySource = 'clawhub' | 'skills-sh' | 'awesome-openclaw'
 
 export interface RegistrySkill {
   slug: string
@@ -171,7 +171,80 @@ export function checkSkillSecurity(content: string): SecurityReport {
 
 const CLAWHUB_API = 'https://clawhub.ai/api'
 const SKILLS_SH_API = 'https://skills.sh/api'
+const AWESOME_OPENCLAW_README = 'https://raw.githubusercontent.com/VoltAgent/awesome-openclaw-skills/main/README.md'
+const AWESOME_OPENCLAW_RAW_BASE = 'https://raw.githubusercontent.com/openclaw/skills/main/skills'
 const FETCH_TIMEOUT = 10_000
+
+// ---------------------------------------------------------------------------
+// Awesome OpenClaw — in-memory cached index from GitHub README
+// ---------------------------------------------------------------------------
+
+const AWESOME_CACHE_TTL = 15 * 60 * 1000 // 15 minutes
+let awesomeCache: { skills: RegistrySkill[]; fetchedAt: number } | null = null
+
+const AWESOME_ENTRY_RE = /^- \[([^\]]+)\]\(https:\/\/github\.com\/openclaw\/skills\/tree\/main\/skills\/([^/]+)\/([^/]+)\/SKILL\.md\)\s*-\s*(.+)$/gm
+
+function parseAwesomeReadme(markdown: string): RegistrySkill[] {
+  const skills: RegistrySkill[] = []
+  let match: RegExpExecArray | null
+  while ((match = AWESOME_ENTRY_RE.exec(markdown)) !== null) {
+    const [, name, author, skillName, description] = match
+    skills.push({
+      slug: `${author}/${skillName}`,
+      name: name || skillName,
+      description: description.trim(),
+      author,
+      version: 'latest',
+      source: 'awesome-openclaw',
+    })
+  }
+  return skills
+}
+
+async function fetchAwesomeIndex(): Promise<RegistrySkill[]> {
+  const now = Date.now()
+  if (awesomeCache && now - awesomeCache.fetchedAt < AWESOME_CACHE_TTL) {
+    return awesomeCache.skills
+  }
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15_000)
+    let res: Response
+    try {
+      res = await fetch(AWESOME_OPENCLAW_README, { signal: controller.signal })
+    } finally {
+      clearTimeout(timer)
+    }
+    if (!res.ok) throw new Error(`GitHub fetch failed (${res.status})`)
+    const markdown = await res.text()
+    const skills = parseAwesomeReadme(markdown)
+    awesomeCache = { skills, fetchedAt: now }
+    return skills
+  } catch (err: any) {
+    logger.warn({ err: err.message }, 'Awesome OpenClaw fetch error')
+    if (awesomeCache) return awesomeCache.skills // stale fallback
+    return []
+  }
+}
+
+async function searchAwesomeOpenclaw(query: string): Promise<RegistrySearchResult> {
+  const index = await fetchAwesomeIndex()
+  const q = query.toLowerCase()
+  const matched = index.filter(s =>
+    s.name.toLowerCase().includes(q) ||
+    s.description.toLowerCase().includes(q) ||
+    s.author.toLowerCase().includes(q)
+  ).slice(0, 50)
+  return { skills: matched, total: matched.length, source: 'awesome-openclaw' }
+}
+
+async function fetchAwesomeOpenclawSkill(slug: string): Promise<{ content: string }> {
+  const url = `${AWESOME_OPENCLAW_RAW_BASE}/${slug}/SKILL.md`
+  const res = await fetchWithTimeout(url)
+  if (!res.ok) throw new Error(`Awesome OpenClaw skill fetch failed (${res.status})`)
+  const content = await res.text()
+  return { content }
+}
 
 async function fetchWithTimeout(url: string, options: RequestInit = {}): Promise<Response> {
   const controller = new AbortController()
@@ -239,6 +312,7 @@ async function searchSkillsSh(query: string): Promise<RegistrySearchResult> {
 export async function searchRegistry(source: RegistrySource, query: string): Promise<RegistrySearchResult> {
   if (source === 'clawhub') return searchClawdHub(query)
   if (source === 'skills-sh') return searchSkillsSh(query)
+  if (source === 'awesome-openclaw') return searchAwesomeOpenclaw(query)
   return { skills: [], total: 0, source }
 }
 
@@ -303,6 +377,9 @@ export async function installFromRegistry(req: InstallRequest): Promise<InstallR
       const result = await fetchClawdHubSkill(req.slug)
       content = result.content
       registryHash = result.hash
+    } else if (req.source === 'awesome-openclaw') {
+      const result = await fetchAwesomeOpenclawSkill(req.slug)
+      content = result.content
     } else {
       const result = await fetchSkillsShSkill(req.slug)
       content = result.content

@@ -1,3 +1,30 @@
+import { getDatabase } from '@/lib/db'
+
+export function queryPendingAssignments(agentId: string): Assignment[] {
+  try {
+    const db = getDatabase()
+    const rows = db.prepare(`
+      SELECT id, title, description, priority
+      FROM tasks
+      WHERE (assigned_to = ? OR assigned_to IS NULL)
+        AND status IN ('assigned', 'inbox')
+      ORDER BY
+        CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END ASC,
+        due_date ASC,
+        created_at ASC
+      LIMIT 5
+    `).all(agentId) as Array<{ id: number; title: string; description: string | null; priority: string }>
+
+    return rows.map(row => ({
+      taskId: String(row.id),
+      description: row.title + (row.description ? `\n${row.description}` : ''),
+      priority: row.priority === 'critical' ? 0 : row.priority === 'high' ? 1 : row.priority === 'medium' ? 2 : 3,
+    }))
+  } catch {
+    return []
+  }
+}
+
 export interface AgentRegistration {
   agentId: string
   name: string

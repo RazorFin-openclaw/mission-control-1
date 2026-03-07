@@ -48,6 +48,37 @@ const IDENTITY_FILES = ['soul.md', 'AGENT.md', 'agent.md', 'identity.md']
 const CONFIG_FILES = ['config.json', 'agent.json']
 const ALL_MARKERS = [...IDENTITY_FILES, ...CONFIG_FILES]
 
+// YAML frontmatter fields for flat .md agent files (Claude Code format)
+interface AgentFrontmatter {
+  name?: string
+  description?: string
+  model?: string
+  color?: string
+  tools?: string[]
+}
+
+function parseYamlFrontmatter(content: string): { frontmatter: AgentFrontmatter; body: string } {
+  const match = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
+  if (!match) return { frontmatter: {}, body: content }
+  const raw = match[1]
+  const body = match[2]
+  const fm: AgentFrontmatter = {}
+  for (const line of raw.split('\n')) {
+    const kv = line.match(/^(\w+)\s*:\s*(.+)$/)
+    if (!kv) continue
+    const [, key, val] = kv
+    const cleaned = val.replace(/^["']|["']$/g, '').trim()
+    if (key === 'name') fm.name = cleaned
+    else if (key === 'description') fm.description = cleaned
+    else if (key === 'model') fm.model = cleaned
+    else if (key === 'color') fm.color = cleaned
+    else if (key === 'tools') {
+      try { fm.tools = JSON.parse(val) } catch { /* ignore */ }
+    }
+  }
+  return { frontmatter: fm, body }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -81,6 +112,7 @@ function getLocalAgentRoots(): string[] {
 
 function scanLocalAgents(): DiskAgent[] {
   const agents: DiskAgent[] = []
+  const seen = new Set<string>()
 
   for (const root of getLocalAgentRoots()) {
     if (!existsSync(root)) continue
@@ -95,22 +127,57 @@ function scanLocalAgents(): DiskAgent[] {
       // Skip 'skills' subdirectory — that's the skill roots
       if (entry === 'skills') continue
 
-      const agentDir = join(root, entry)
+      const fullPath = join(root, entry)
+      let stat
       try {
-        if (!statSync(agentDir).isDirectory()) continue
+        stat = statSync(fullPath)
       } catch {
         continue
       }
 
+      // --- Flat .md agent files (Claude Code format) ---
+      if (stat.isFile() && entry.endsWith('.md') && entry !== 'CLAUDE.md' && entry !== 'AGENTS.md') {
+        try {
+          const content = readFileSync(fullPath, 'utf8')
+          const { frontmatter, body } = parseYamlFrontmatter(content)
+          const agentName = frontmatter.name || entry.replace(/\.md$/, '')
+          if (seen.has(agentName)) continue
+          seen.add(agentName)
+
+          const configObj: Record<string, unknown> = {}
+          if (frontmatter.model) configObj.model = frontmatter.model
+          if (frontmatter.color) configObj.color = frontmatter.color
+          if (frontmatter.tools) configObj.tools = frontmatter.tools
+          if (frontmatter.description) configObj.description = frontmatter.description
+          const configJson = Object.keys(configObj).length > 0 ? JSON.stringify(configObj) : null
+
+          agents.push({
+            name: agentName,
+            dir: fullPath,
+            role: frontmatter.description ? 'agent' : 'agent',
+            soulContent: body.trim() || null,
+            configContent: configJson,
+            contentHash: sha256(content),
+          })
+        } catch { /* unreadable */ }
+        continue
+      }
+
+      // --- Directory-based agents (workspace format) ---
+      if (!stat.isDirectory()) continue
+
       // Check if any marker file exists
-      const hasMarker = ALL_MARKERS.some(f => existsSync(join(agentDir, f)))
+      const hasMarker = ALL_MARKERS.some(f => existsSync(join(fullPath, f)))
       if (!hasMarker) continue
+
+      if (seen.has(entry)) continue
+      seen.add(entry)
 
       // Read identity content (soul/agent/identity.md)
       let soulContent: string | null = null
       let role = 'agent'
       for (const f of IDENTITY_FILES) {
-        const p = join(agentDir, f)
+        const p = join(fullPath, f)
         if (existsSync(p)) {
           try {
             soulContent = readFileSync(p, 'utf8')
@@ -123,7 +190,7 @@ function scanLocalAgents(): DiskAgent[] {
       // Read config JSON if present
       let configContent: string | null = null
       for (const f of CONFIG_FILES) {
-        const p = join(agentDir, f)
+        const p = join(fullPath, f)
         if (existsSync(p)) {
           try {
             configContent = readFileSync(p, 'utf8')
@@ -138,7 +205,7 @@ function scanLocalAgents(): DiskAgent[] {
 
       agents.push({
         name: entry,
-        dir: agentDir,
+        dir: fullPath,
         role,
         soulContent,
         configContent,

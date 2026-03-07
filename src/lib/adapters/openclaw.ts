@@ -1,4 +1,5 @@
 import { eventBus } from '@/lib/event-bus'
+import { queryPendingAssignments } from './adapter'
 import type { FrameworkAdapter, AgentRegistration, HeartbeatPayload, TaskReport, Assignment } from './adapter'
 
 export class OpenClawAdapter implements FrameworkAdapter {
@@ -34,9 +35,8 @@ export class OpenClawAdapter implements FrameworkAdapter {
     })
   }
 
-  async getAssignments(_agentId: string): Promise<Assignment[]> {
-    // TODO: query task queue for pending assignments
-    return []
+  async getAssignments(agentId: string): Promise<Assignment[]> {
+    return queryPendingAssignments(agentId)
   }
 
   async disconnect(agentId: string): Promise<void> {

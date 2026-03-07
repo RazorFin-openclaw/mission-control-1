@@ -330,9 +330,9 @@ export function getUserFromRequest(request: Request): User | null {
     if (user) return { ...user, agent_name: agentName }
   }
 
-  // Check API key - env var first, then DB-backed keys
-  const configuredApiKey = (process.env.API_KEY || '').trim()
+  // Check API key - DB override first, then env var
   const apiKey = extractApiKeyFromHeaders(request.headers)
+  const configuredApiKey = resolveActiveApiKey()
 
   if (configuredApiKey && apiKey && safeCompare(apiKey, configuredApiKey)) {
     return {
@@ -356,6 +356,22 @@ export function getUserFromRequest(request: Request): User | null {
   }
 
   return null
+}
+
+/**
+ * Resolve the active API key: check DB settings override first, then env var.
+ */
+function resolveActiveApiKey(): string {
+  try {
+    const db = getDatabase()
+    const row = db.prepare(
+      "SELECT value FROM settings WHERE key = 'security.api_key'"
+    ).get() as { value: string } | undefined
+    if (row?.value) return row.value
+  } catch {
+    // DB not ready yet — fall back to env
+  }
+  return (process.env.API_KEY || '').trim()
 }
 
 function extractApiKeyFromHeaders(headers: Headers): string | null {

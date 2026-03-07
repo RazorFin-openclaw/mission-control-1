@@ -40,7 +40,7 @@ const QUICK_NAV_COMMANDS: Array<{ panel: string; title: string; aliases: string[
 ]
 
 export function HeaderBar() {
-  const { activeTab, connection, sessions, unreadNotificationCount, activeTenant, activeProject } = useMissionControl()
+  const { activeTab, connection, sessions, unreadNotificationCount, activeTenant, activeProject, dashboardMode } = useMissionControl()
   const { isConnected, reconnect } = useWebSocket()
   const navigateToPanel = useNavigateToPanel()
   const prefetchPanel = usePrefetchPanel()
@@ -315,6 +315,21 @@ export function HeaderBar() {
               <span className="font-medium text-foreground truncate max-w-[220px]">{activeTenant.display_name}</span>
             </div>
           ) : null}
+
+          <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-2xs ${
+            dashboardMode === 'local'
+              ? 'bg-void-cyan/10 border border-void-cyan/25'
+              : 'bg-purple-500/10 border border-purple-500/25'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              dashboardMode === 'local' ? 'bg-void-cyan' : 'bg-purple-500'
+            }`} />
+            <span className={`font-medium ${
+              dashboardMode === 'local' ? 'text-void-cyan' : 'text-purple-400'
+            }`}>
+              {dashboardMode === 'local' ? 'Local' : 'Gateway'}
+            </span>
+          </div>
         </div>
 
         {/* Center: wide command search (desktop) */}
