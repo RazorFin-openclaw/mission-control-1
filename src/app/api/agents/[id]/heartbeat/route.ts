@@ -63,6 +63,8 @@ export async function GET(
         count: mentions.length,
         items: mentions.map((m: any) => ({
           id: m.id,
+          task_id: m.task_id,
+          comment_id: m.id,
           task_title: m.task_title,
           author: m.author,
           content: m.content.substring(0, 100) + '...',
@@ -80,7 +82,23 @@ export async function GET(
       ORDER BY priority DESC, created_at ASC
       LIMIT 10
     `).all(agent.name, workspaceId);
-    
+
+    const assignedOnlyTasks = assignedTasks.filter((t: any) => t.status === 'assigned').map((t: any) => ({
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      priority: t.priority,
+      due_date: t.due_date
+    }));
+
+    const inProgressTasks = assignedTasks.filter((t: any) => t.status === 'in_progress').map((t: any) => ({
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      priority: t.priority,
+      due_date: t.due_date
+    }));
+
     if (assignedTasks.length > 0) {
       workItems.push({
         type: 'assigned_tasks',
@@ -96,8 +114,8 @@ export async function GET(
     }
     
     // 3. Check for unread notifications
-    const notifications = db_helpers.getUnreadNotifications(agent.name, workspaceId);
-    
+    const notifications = db_helpers.getPendingNotifications(agent.name, workspaceId);
+
     if (notifications.length > 0) {
       workItems.push({
         type: 'notifications',
@@ -107,7 +125,9 @@ export async function GET(
           type: n.type,
           title: n.title,
           message: n.message,
-          created_at: n.created_at
+          created_at: n.created_at,
+          task_id: n.source_type === 'task' ? n.source_id : null,
+          comment_id: n.source_type === 'comment' ? n.source_id : null,
         }))
       });
     }
@@ -155,14 +175,20 @@ export async function GET(
         status: 'HEARTBEAT_OK',
         agent: agent.name,
         checked_at: now,
-        message: 'No work items found'
+        message: 'No work items found',
+        assigned_tasks: [],
+        in_progress_tasks: [],
+        has_actionable_work: false,
       });
     }
-    
+
     return NextResponse.json({
       status: 'WORK_ITEMS_FOUND',
       agent: agent.name,
       checked_at: now,
+      assigned_tasks: assignedOnlyTasks,
+      in_progress_tasks: inProgressTasks,
+      has_actionable_work: assignedOnlyTasks.length > 0 || inProgressTasks.length > 0,
       work_items: workItems,
       total_items: workItems.reduce((sum, item) => sum + item.count, 0)
     });

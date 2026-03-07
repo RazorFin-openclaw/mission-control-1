@@ -149,10 +149,10 @@ export async function PUT(request: NextRequest) {
     const db = getDatabase();
     const workspaceId = auth.user.workspace_id ?? 1;
     const body = await request.json();
-    const { ids, recipient, markAllRead } = body;
-    
+    const { ids, recipient, markAllRead, action } = body;
+
     const now = Math.floor(Date.now() / 1000);
-    
+
     if (markAllRead && recipient) {
       // Mark all notifications as read for this recipient
       const stmt = db.prepare(`
@@ -160,31 +160,36 @@ export async function PUT(request: NextRequest) {
         SET read_at = ?
         WHERE recipient = ? AND read_at IS NULL AND workspace_id = ?
       `);
-      
+
       const result = stmt.run(now, recipient, workspaceId);
-      
-      return NextResponse.json({ 
-        success: true, 
-        markedAsRead: result.changes 
+
+      return NextResponse.json({
+        success: true,
+        action: 'read',
+        marked: result.changes,
+        markedAsRead: result.changes,
       });
     } else if (ids && Array.isArray(ids)) {
-      // Mark specific notifications as read
+      // Mark specific notifications as acked/read
       const placeholders = ids.map(() => '?').join(',');
+      const normalizedAction = action === 'ack' ? 'ack' : 'read';
       const stmt = db.prepare(`
         UPDATE notifications 
         SET read_at = ?
         WHERE id IN (${placeholders}) AND read_at IS NULL AND workspace_id = ?
       `);
-      
+
       const result = stmt.run(now, ...ids, workspaceId);
-      
-      return NextResponse.json({ 
-        success: true, 
-        markedAsRead: result.changes 
+
+      return NextResponse.json({
+        success: true,
+        action: normalizedAction,
+        marked: result.changes,
+        markedAsRead: result.changes,
       });
     } else {
-      return NextResponse.json({ 
-        error: 'Either provide ids array or recipient with markAllRead=true' 
+      return NextResponse.json({
+        error: 'Either provide ids array or recipient with markAllRead=true'
       }, { status: 400 });
     }
   } catch (error) {
