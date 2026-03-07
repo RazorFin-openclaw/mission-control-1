@@ -348,7 +348,7 @@ function GatewayCard({ gateway, health, isProbing, isCurrentlyConnected, onSetPr
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${statusColors[gateway.status] || statusColors.unknown}`} />
+            <span className={`w-2 h-2 rounded-full ${isCurrentlyConnected ? 'bg-green-500' : (statusColors[gateway.status] || statusColors.unknown)}`} />
             <h3 className="text-sm font-semibold text-foreground">{gateway.name}</h3>
             {gateway.is_primary ? (
               <span className="text-2xs px-1.5 py-0.5 rounded bg-primary/20 text-primary border border-primary/30 font-medium">
