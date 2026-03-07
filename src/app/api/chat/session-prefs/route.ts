@@ -68,7 +68,7 @@ export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}))
     const key = typeof body?.key === 'string' ? body.key.trim() : ''
-    if (!key || !/^(claude-code|codex-cli):[a-zA-Z0-9._:-]+$/.test(key)) {
+    if (!key || !/^[a-zA-Z0-9_-]+:[a-zA-Z0-9._:-]+$/.test(key)) {
       return NextResponse.json({ error: 'Invalid key' }, { status: 400 })
     }
 

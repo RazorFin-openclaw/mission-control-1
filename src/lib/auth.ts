@@ -330,7 +330,7 @@ export function getUserFromRequest(request: Request): User | null {
     if (user) return { ...user, agent_name: agentName }
   }
 
-  // Check API key - return synthetic user
+  // Check API key - env var first, then DB-backed keys
   const configuredApiKey = (process.env.API_KEY || '').trim()
   const apiKey = extractApiKeyFromHeaders(request.headers)
 

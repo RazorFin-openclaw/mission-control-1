@@ -1042,6 +1042,44 @@ const migrations: Migration[] = [
       }
       db.exec(`CREATE INDEX IF NOT EXISTS idx_agents_source ON agents(source)`)
     }
+  },
+  {
+    id: '035_api_keys_v2',
+    up(db: Database.Database) {
+      // Previous migrations (027/030) may have created an api_keys table with a different schema.
+      // Drop and recreate with the full user-scoped schema.
+      const existing = db
+        .prepare(`SELECT 1 as ok FROM sqlite_master WHERE type = 'table' AND name = 'api_keys'`)
+        .get() as { ok?: number } | undefined
+
+      if (existing?.ok) {
+        db.exec(`DROP TABLE api_keys`)
+      }
+
+      db.exec(`
+        CREATE TABLE api_keys (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          label TEXT NOT NULL,
+          key_prefix TEXT NOT NULL,
+          key_hash TEXT NOT NULL UNIQUE,
+          role TEXT NOT NULL DEFAULT 'viewer',
+          scopes TEXT,
+          expires_at INTEGER,
+          last_used_at INTEGER,
+          last_used_ip TEXT,
+          workspace_id INTEGER NOT NULL DEFAULT 1,
+          tenant_id INTEGER NOT NULL DEFAULT 1,
+          is_revoked INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_workspace_id ON api_keys(workspace_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)`)
+    }
   }
 ]
 

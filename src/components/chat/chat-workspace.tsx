@@ -8,13 +8,9 @@ import { ConversationList } from './conversation-list'
 import { MessageList } from './message-list'
 import { ChatInput } from './chat-input'
 import { Button } from '@/components/ui/button'
+import { SessionMessage, shouldShowTimestamp, type SessionTranscriptMessage } from './session-message'
 
 const log = createClientLogger('ChatWorkspace')
-type SessionTranscriptMessage = {
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  timestamp?: string
-}
 
 interface ChatWorkspaceProps {
   mode?: 'overlay' | 'embedded'
@@ -487,102 +483,99 @@ function SessionConversationView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="border-b border-border/50 px-4 py-3 text-xs text-muted-foreground">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
+      {/* Compact session info bar */}
+      <div className="border-b border-border/50 px-4 py-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2">
           <span className={`rounded-full px-2 py-0.5 text-[10px] ${session.active ? 'bg-green-500/20 text-green-300' : 'bg-muted text-muted-foreground'}`}>
             {session.active ? 'active' : 'idle'}
           </span>
-          <span>{session.sessionKind === 'codex-cli' ? 'Codex CLI' : 'Claude Code'}</span>
-          {session.age && <span>• {session.age} ago</span>}
+          <span className="font-mono-tight">{session.sessionKind === 'codex-cli' ? 'Codex CLI' : 'Claude Code'}</span>
+          {session.model && <span className="text-muted-foreground/60">{session.model}</span>}
+          {session.tokens && <span className="text-muted-foreground/60">{session.tokens}</span>}
+          {session.workingDir && <span className="hidden truncate text-muted-foreground/50 sm:inline max-w-[200px]">{session.workingDir}</span>}
+          {session.age && <span className="text-muted-foreground/40">{session.age} ago</span>}
         </div>
-        <div className="space-y-1">
-          {session.model && <div><span className="text-muted-foreground/70">Model:</span> {session.model}</div>}
-          {session.tokens && <div><span className="text-muted-foreground/70">Tokens:</span> {session.tokens}</div>}
-          {session.workingDir && <div className="truncate"><span className="text-muted-foreground/70">Dir:</span> {session.workingDir}</div>}
-          {session.lastUserPrompt && (
-            <div className="line-clamp-2">
-              <span className="text-muted-foreground/70">Last prompt:</span> {session.lastUserPrompt}
+
+        {/* Collapsible settings */}
+        {!isGatewaySession && (
+          <details className="mt-2">
+            <summary className="cursor-pointer select-none text-[10px] uppercase tracking-wider text-muted-foreground/60 hover:text-muted-foreground/80">
+              Settings
+            </summary>
+            <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_120px_auto]">
+              <input
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                placeholder="Rename session"
+                maxLength={80}
+                className="h-7 rounded border border-border/60 bg-surface-1 px-2 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
+              />
+              <select
+                value={colorDraft}
+                onChange={(e) => setColorDraft(e.target.value)}
+                className="h-7 rounded border border-border/60 bg-surface-1 px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
+              >
+                <option value="">No color</option>
+                <option value="slate">Slate</option>
+                <option value="blue">Blue</option>
+                <option value="green">Green</option>
+                <option value="amber">Amber</option>
+                <option value="red">Red</option>
+                <option value="purple">Purple</option>
+                <option value="pink">Pink</option>
+                <option value="teal">Teal</option>
+              </select>
+              <Button
+                onClick={handleSavePrefs}
+                size="sm"
+                variant="outline"
+                disabled={prefBusy || !session.prefKey || !hasPrefChanges}
+                className="h-7 px-3 text-xs"
+              >
+                {prefBusy ? 'Saving...' : 'Save'}
+              </Button>
             </div>
-          )}
-        </div>
+            {prefError && <div className="mt-2 text-xs text-red-400">{prefError}</div>}
+          </details>
+        )}
       </div>
 
-      {!isGatewaySession && (
-      <div className="border-b border-border/50 px-4 py-3">
-        <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Session settings</div>
-        <div className="grid gap-2 sm:grid-cols-[1fr_120px_auto]">
-          <input
-            value={nameDraft}
-            onChange={(e) => setNameDraft(e.target.value)}
-            placeholder="Rename session"
-            maxLength={80}
-            className="h-8 rounded border border-border/60 bg-surface-1 px-2 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
-          />
-          <select
-            value={colorDraft}
-            onChange={(e) => setColorDraft(e.target.value)}
-            className="h-8 rounded border border-border/60 bg-surface-1 px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
-          >
-            <option value="">No color</option>
-            <option value="slate">Slate</option>
-            <option value="blue">Blue</option>
-            <option value="green">Green</option>
-            <option value="amber">Amber</option>
-            <option value="red">Red</option>
-            <option value="purple">Purple</option>
-            <option value="pink">Pink</option>
-            <option value="teal">Teal</option>
-          </select>
-          <Button
-            onClick={handleSavePrefs}
-            size="sm"
-            variant="outline"
-            disabled={prefBusy || !session.prefKey || !hasPrefChanges}
-            className="h-8 px-3 text-xs"
-          >
-            {prefBusy ? 'Saving...' : 'Save'}
-          </Button>
-        </div>
-        {prefError && <div className="mt-2 text-xs text-red-400">{prefError}</div>}
-      </div>
-      )}
-
-      <div ref={transcriptScrollRef} className="flex-1 overflow-y-auto px-4 py-3">
+      {/* Transcript */}
+      <div ref={transcriptScrollRef} className="flex-1 overflow-y-auto font-mono-tight py-2">
         {loading && (
-          <div className="space-y-2">
-            <div className="h-16 animate-pulse rounded-lg border border-border/50 bg-surface-1/60" />
-            <div className="h-20 animate-pulse rounded-lg border border-border/50 bg-surface-1/60" />
-            <div className="h-14 animate-pulse rounded-lg border border-border/50 bg-surface-1/60" />
-            <div className="text-xs text-muted-foreground">Loading transcript...</div>
+          <div className="space-y-2 px-4">
+            <div className="h-4 w-3/4 animate-pulse rounded bg-surface-1/60" />
+            <div className="h-4 w-1/2 animate-pulse rounded bg-surface-1/60" />
+            <div className="h-4 w-2/3 animate-pulse rounded bg-surface-1/60" />
+            <div className="text-xs text-muted-foreground/50">Loading transcript...</div>
           </div>
         )}
         {!loading && error && (
-          <div className="text-xs text-red-400">{error}</div>
+          <div className="px-4 text-xs text-red-400">{error}</div>
         )}
         {!loading && !error && messages.length === 0 && (
-          <div className="text-xs text-muted-foreground">
+          <div className="px-4 text-xs text-muted-foreground">
             {isGatewaySession ? 'Gateway session selected. Transcript is provided by the gateway runtime.' : 'No transcript snippets found for this session.'}
           </div>
         )}
         {!loading && !error && messages.length > 0 && (
-          <div className="space-y-2">
+          <div className="space-y-0">
             {messages.map((msg, idx) => (
-              <div key={`${msg.timestamp || 'no-ts'}-${idx}`} className={`rounded-lg border border-border/50 p-3 text-xs ${msg.role === 'user' ? 'bg-surface-1' : 'bg-card'}`}>
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="font-medium uppercase tracking-wide text-muted-foreground">{msg.role}</span>
-                  {msg.timestamp && <span className="text-[10px] text-muted-foreground/70">{new Date(msg.timestamp).toLocaleString()}</span>}
-                </div>
-                <pre className="whitespace-pre-wrap font-sans text-foreground">{msg.content}</pre>
-              </div>
+              <SessionMessage
+                key={`${msg.timestamp || 'no-ts'}-${idx}`}
+                message={msg}
+                showTimestamp={shouldShowTimestamp(msg, messages[idx - 1])}
+              />
             ))}
           </div>
         )}
       </div>
 
+      {/* Continue session input */}
       {!isGatewaySession && (
-      <div className="border-t border-border/50 px-4 py-3">
-        <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Continue session</div>
-        <div className="flex gap-2">
+      <div className="border-t border-border/50 px-4 py-2">
+        <div className="flex items-center gap-2">
+          <span className="font-mono-tight text-xs text-green-400/60">$</span>
           <input
             value={continuePrompt}
             onChange={(e) => setContinuePrompt(e.target.value)}
@@ -593,22 +586,22 @@ function SessionConversationView({
               }
             }}
             placeholder="Send prompt to this local session..."
-            className="h-8 flex-1 rounded border border-border/60 bg-surface-1 px-2 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
+            className="h-7 flex-1 rounded border border-border/40 bg-surface-1 px-2 font-mono-tight text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/30"
           />
           <Button
             onClick={handleContinueSession}
             size="sm"
+            variant="ghost"
             disabled={continueBusy || !continuePrompt.trim()}
-            className="h-8 px-3 text-xs"
+            className="h-7 px-3 text-xs"
           >
-            {continueBusy ? 'Sending...' : 'Send'}
+            {continueBusy ? '...' : 'Send'}
           </Button>
         </div>
-        {continueError && <div className="mt-2 text-xs text-red-400">{continueError}</div>}
+        {continueError && <div className="mt-1 text-xs text-red-400">{continueError}</div>}
         {lastReply && (
-          <div className="mt-2 rounded border border-border/50 bg-surface-1 p-2 text-xs text-foreground">
-            <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">Latest reply</div>
-            <pre className="whitespace-pre-wrap font-sans">{lastReply}</pre>
+          <div className="mt-2 border-l-2 border-primary/30 pl-3">
+            <div className="font-mono-tight text-xs leading-relaxed text-foreground whitespace-pre-wrap">{lastReply}</div>
           </div>
         )}
       </div>

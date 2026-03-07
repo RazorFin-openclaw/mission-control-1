@@ -24,11 +24,12 @@ Manage agent fleets, track tasks, monitor costs, and orchestrate workflows — a
 
 Running AI agents at scale means juggling sessions, tasks, costs, and reliability across multiple models and channels. Mission Control gives you:
 
-- **32 panels** — Tasks, agents, logs, tokens, memory, cron, alerts, webhooks, pipelines, and more
+- **32 panels** — Tasks, agents, skills, logs, tokens, memory, cron, alerts, webhooks, pipelines, and more
 - **Real-time everything** — WebSocket + SSE push updates, smart polling that pauses when you're away
 - **Zero external dependencies** — SQLite database, single `pnpm start` to run, no Redis/Postgres/Docker required
 - **Role-based access** — Viewer, operator, and admin roles with session + API key auth
 - **Quality gates** — Built-in review system that blocks task completion without sign-off
+- **Skills Hub** — Browse, install, and security-scan agent skills from ClawdHub and skills.sh registries
 - **Multi-gateway** — Connect to multiple agent gateways simultaneously (OpenClaw, and more coming soon)
 
 ## Quick Start
@@ -65,6 +66,10 @@ If `AUTH_PASS` contains `#`, quote it (e.g. `AUTH_PASS="my#password"`) or use `A
 - Ed25519 device identity for secure gateway handshake
 - Agent SOUL system with workspace file sync and templates
 - Agent inter-agent messaging and comms
+- Skills Hub with ClawdHub and skills.sh registry integration (search, install, security scan)
+- Bidirectional skill sync — disk ↔ DB with SHA-256 change detection
+- Local agent discovery from `~/.agents/`, `~/.codex/agents/`, `~/.claude/agents/`
+- Skill security scanner (prompt injection, credential leaks, data exfiltration, obfuscated content)
 - Update available banner with GitHub release check and one-click self-update
 - Framework adapter layer for multi-agent registration (OpenClaw, CrewAI, LangGraph, AutoGen, Claude SDK, generic)
 - Multi-project task organization with per-project ticket prefixes
@@ -108,6 +113,12 @@ Automatically discovers and tracks local Claude Code sessions by scanning `~/.cl
 ### GitHub Issues Sync
 Inbound sync from GitHub repositories with label and assignee mapping. Synced issues appear on the task board alongside agent-created tasks.
 
+### Skills Hub
+Browse, install, and manage agent skills from local directories and external registries (ClawdHub, skills.sh). Bidirectional sync detects manual additions on disk and pushes UI edits back to `SKILL.md` files. Built-in security scanner checks for prompt injection, credential leaks, data exfiltration, obfuscated content, and dangerous shell commands before installation. Supports 5 skill roots: `~/.agents/skills`, `~/.codex/skills`, project-local `.agents/skills` and `.codex/skills`, and `~/.openclaw/skills` for gateway mode.
+
+### Local Agent Discovery
+Automatically discovers agent definitions from `~/.agents/`, `~/.codex/agents/`, and `~/.claude/agents/` directories. Detection looks for marker files (AGENT.md, soul.md, identity.md, config.json). Discovered agents sync bidirectionally — edit in the UI and changes write back to disk.
+
 ### Agent SOUL System
 Define agent personality, capabilities, and behavioral guidelines via SOUL markdown files. Edit in the UI or directly in workspace `soul.md` files — changes sync bidirectionally between disk and database.
 
@@ -140,7 +151,7 @@ mission-control/
 │   ├── app/
 │   │   ├── page.tsx           # SPA shell — routes all panels
 │   │   ├── login/page.tsx     # Login page
-│   │   └── api/               # 97 REST API routes
+│   │   └── api/               # 98 REST API routes
 │   ├── components/
 │   │   ├── layout/            # NavRail, HeaderBar, LiveFeed
 │   │   ├── dashboard/         # Overview dashboard
@@ -150,12 +161,15 @@ mission-control/
 │   │   ├── auth.ts            # Session + API key auth, RBAC
 │   │   ├── db.ts              # SQLite (better-sqlite3, WAL mode)
 │   │   ├── claude-sessions.ts  # Local Claude Code session scanner
-│   │   ├── migrations.ts      # 30 schema migrations
+│   │   ├── migrations.ts      # 34 schema migrations
 │   │   ├── scheduler.ts       # Background task scheduler
 │   │   ├── webhooks.ts        # Outbound webhook delivery
 │   │   ├── websocket.ts       # Gateway WebSocket client
 │   │   ├── device-identity.ts # Ed25519 device identity for gateway auth
 │   │   ├── agent-sync.ts      # OpenClaw config → MC database sync
+│   │   ├── skill-sync.ts      # Bidirectional disk ↔ DB skill sync
+│   │   ├── skill-registry.ts  # ClawdHub + skills.sh registry client & security scanner
+│   │   ├── local-agent-sync.ts # Local agent discovery from ~/.agents, ~/.codex, ~/.claude
 │   │   └── adapters/          # Framework adapters (openclaw, crewai, langgraph, autogen, claude-sdk, generic)
 │   └── store/index.ts         # Zustand state management
 └── .data/                     # Runtime data (SQLite DB, token logs)
@@ -221,6 +235,7 @@ All endpoints require authentication unless noted. Full reference below.
 | `GET` | `/api/agents/[id]/attribution` | viewer | Self-scope attribution/audit/cost report (`?privileged=1` admin override) |
 | `POST` | `/api/agents/sync` | operator | Sync agents from openclaw.json or local disk (`?source=local`) |
 | `POST` | `/api/agents/register` | viewer | Agent self-registration (idempotent, rate-limited) |
+| `GET/POST` | `/api/adapters` | viewer/operator | List adapters / Framework-agnostic agent action dispatch |
 | `GET/PUT` | `/api/agents/[id]/soul` | operator | Agent SOUL content (reads from workspace, writes to both) |
 | `GET/POST` | `/api/agents/comms` | operator | Agent inter-agent communication |
 | `POST` | `/api/agents/message` | operator | Send message to agent |
@@ -316,6 +331,23 @@ All endpoints require authentication unless noted. Full reference below.
 | `GET` | `/api/super/provision-jobs` | admin | List provisioning jobs (filter: `?tenant_id=`, `?status=`) |
 | `POST` | `/api/super/provision-jobs` | admin | Queue additional job for existing tenant |
 | `POST` | `/api/super/provision-jobs/[id]/action` | admin | Approve, reject, or cancel a provisioning job |
+
+</details>
+
+<details>
+<summary><strong>Skills</strong></summary>
+
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/skills` | viewer | List skills (DB-backed with filesystem fallback) |
+| `GET` | `/api/skills?mode=content&source=…&name=…` | viewer | Read SKILL.md content with inline security report |
+| `GET` | `/api/skills?mode=check&source=…&name=…` | viewer | On-demand security scan |
+| `POST` | `/api/skills` | operator | Create skill |
+| `PUT` | `/api/skills` | operator | Update skill content |
+| `DELETE` | `/api/skills` | operator | Delete skill |
+| `GET` | `/api/skills/registry?source=…&q=…` | viewer | Search external registry (ClawdHub, skills.sh) |
+| `POST` | `/api/skills/registry` | admin | Install skill from registry |
+| `PUT` | `/api/skills/registry` | viewer | Security-check content without installing |
 
 </details>
 
@@ -538,6 +570,9 @@ See [open issues](https://github.com/builderz-labs/mission-control/issues) for p
 - [x] Framework adapter layer — multi-agent registration across OpenClaw, CrewAI, LangGraph, AutoGen, Claude SDK, and generic
 - [x] Self-update mechanism — admin-only one-click update with audit logging
 - [x] Multi-project task organization with per-project ticket prefixes
+- [x] Skills Hub — browse, install, and security-scan skills from ClawdHub and skills.sh registries
+- [x] Bidirectional skill sync — disk ↔ DB with SHA-256 change detection (60s scheduler)
+- [x] Local agent discovery — auto-detect agents from `~/.agents/`, `~/.codex/agents/`, `~/.claude/agents/`
 - [ ] Agent-agnostic gateway support — connect any orchestration framework (OpenClaw, ZeroClaw, OpenFang, NeoBot, IronClaw, etc.), not just OpenClaw
 - [ ] **[Flight Deck](https://github.com/splitlabs/flight-deck)** — native desktop companion app (Tauri v2) with real PTY terminal grid, stall inbox with native OS notifications, and system tray HUD. Currently in private beta.
 - [ ] First-class per-agent cost breakdowns — dedicated panel with per-agent token usage and spend (currently derivable from per-session data)

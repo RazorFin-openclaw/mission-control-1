@@ -1,12 +1,24 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useMissionControl, Conversation } from '@/store'
 import { useSmartPoll } from '@/lib/use-smart-poll'
 import { createClientLogger } from '@/lib/client-logger'
 import { Button } from '@/components/ui/button'
 
 const log = createClientLogger('ConversationList')
+
+const COLOR_OPTIONS = [
+  { value: '', label: 'None' },
+  { value: 'slate', label: 'Slate' },
+  { value: 'blue', label: 'Blue' },
+  { value: 'green', label: 'Green' },
+  { value: 'amber', label: 'Amber' },
+  { value: 'red', label: 'Red' },
+  { value: 'purple', label: 'Purple' },
+  { value: 'pink', label: 'Pink' },
+  { value: 'teal', label: 'Teal' },
+] as const
 
 function timeAgo(timestamp: number): string {
   const diff = Math.floor(Date.now() / 1000) - timestamp
@@ -50,15 +62,122 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
   const [search, setSearch] = useState('')
   const isGatewayMode = dashboardMode !== 'local'
 
+  // Context menu state
+  const [ctxMenu, setCtxMenu] = useState<{ convId: string; x: number; y: number } | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const ctxMenuRef = useRef<HTMLDivElement>(null)
+  const editInputRef = useRef<HTMLInputElement>(null)
+
+  // Close context menu on outside click / Escape
+  useEffect(() => {
+    if (!ctxMenu) return
+    const handleClick = (e: MouseEvent) => {
+      if (ctxMenuRef.current && !ctxMenuRef.current.contains(e.target as Node)) {
+        setCtxMenu(null)
+      }
+    }
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCtxMenu(null)
+    }
+    document.addEventListener('mousedown', handleClick)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [ctxMenu])
+
+  // Focus rename input when entering edit mode
+  useEffect(() => {
+    if (editingId && editInputRef.current) {
+      editInputRef.current.focus()
+      editInputRef.current.select()
+    }
+  }, [editingId])
+
+  const saveSessionPref = useCallback(async (conv: Conversation, name?: string, color?: string) => {
+    const prefKey = conv.session?.prefKey
+    if (!prefKey) return
+
+    // Optimistic update immediately
+    setConversations(
+      conversations.map((c) => {
+        if (c.id !== conv.id || !c.session) return c
+        const newName = name !== undefined ? name : c.name
+        return {
+          ...c,
+          name: newName,
+          session: {
+            ...c.session,
+            displayName: newName,
+            colorTag: color !== undefined ? (color || undefined) : c.session.colorTag,
+          },
+        }
+      })
+    )
+
+    try {
+      const body: Record<string, string | null> = { key: prefKey }
+      if (name !== undefined) body.name = name || null
+      if (color !== undefined) body.color = color || null
+
+      const res = await fetch('/api/chat/session-prefs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        log.error('Failed to save session pref, server returned', res.status)
+      }
+    } catch (err) {
+      log.error('Failed to save session pref:', err)
+    }
+  }, [conversations, setConversations])
+
+  const handleContextMenu = (e: React.MouseEvent, conv: Conversation) => {
+    if (!conv.session?.prefKey) return
+    e.preventDefault()
+    // Clamp to viewport so menu doesn't overflow
+    const x = Math.min(e.clientX, window.innerWidth - 200)
+    const y = Math.min(e.clientY, window.innerHeight - 160)
+    setCtxMenu({ convId: conv.id, x, y })
+  }
+
+  const startRename = (conv: Conversation) => {
+    setEditingId(conv.id)
+    setEditName(conv.session?.displayName || conv.name || '')
+    setCtxMenu(null)
+  }
+
+  const commitRenameRef = useRef(false)
+  const commitRename = (conv: Conversation) => {
+    if (commitRenameRef.current) return
+    commitRenameRef.current = true
+    const trimmed = editName.trim()
+    setEditingId(null)
+    // Always save if non-empty — let the API dedupe unchanged names
+    if (trimmed) {
+      void saveSessionPref(conv, trimmed)
+    }
+    // Reset guard after microtask so onBlur after Enter doesn't double-fire
+    queueMicrotask(() => { commitRenameRef.current = false })
+  }
+
+  const setColor = (conv: Conversation, color: string) => {
+    setCtxMenu(null)
+    void saveSessionPref(conv, undefined, color)
+  }
+
   const loadConversations = useCallback(async () => {
     try {
       const sessionsUrl = dashboardMode === 'local'
         ? '/api/sessions?include_local=1'
         : '/api/sessions'
-      const requests: Promise<Response>[] = [fetch(sessionsUrl)]
-      if (dashboardMode === 'local') {
-        requests.push(fetch('/api/chat/session-prefs'))
-      }
+      const requests: Promise<Response>[] = [
+        fetch(sessionsUrl),
+        fetch('/api/chat/session-prefs'),
+      ]
 
       const [sessionsRes, prefsRes] = await Promise.all(requests)
       const sessionsData = sessionsRes.ok ? await sessionsRes.json() : { sessions: [] }
@@ -84,9 +203,10 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
               : 'Gateway'
           const prefKey = `${s.kind}:${s.id}`
           const pref = prefs[prefKey] || {}
-          const sessionName = dashboardMode === 'local'
-            ? (pref.name || `${kindLabel} • ${s.key || s.id}`)
+          const defaultName = dashboardMode === 'local'
+            ? `${kindLabel} • ${s.key || s.id}`
             : `${s.agent || 'Gateway'} • ${s.key || s.id}`
+          const sessionName = pref.name || defaultName
           const sessionKind = s.kind === 'claude-code' || s.kind === 'codex-cli' ? s.kind : 'gateway'
 
           return {
@@ -95,11 +215,11 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
             kind: s.kind,
             source: 'session' as const,
             session: {
-              prefKey: dashboardMode === 'local' ? prefKey : undefined,
+              prefKey,
               sessionId: String(s.id),
               sessionKind,
               displayName: sessionName,
-              colorTag: dashboardMode === 'local' && typeof pref.color === 'string' ? pref.color : undefined,
+              colorTag: typeof pref.color === 'string' ? pref.color : undefined,
               model: s.model,
               tokens: s.tokens,
               workingDir: s.workingDir || null,
@@ -149,21 +269,27 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
   })
 
   const gatewayRows = filteredConversations.filter((c) => c.source === 'session' && c.session?.sessionKind === 'gateway')
-  const claudeRows = filteredConversations.filter((c) => c.source === 'session' && c.session?.sessionKind === 'claude-code')
-  const codexRows = filteredConversations.filter((c) => c.source === 'session' && c.session?.sessionKind === 'codex-cli')
+  const activeGatewayRows = gatewayRows.filter((c) => c.session?.active)
+  const inactiveGatewayRows = gatewayRows.filter((c) => !c.session?.active)
+  const localRows = filteredConversations.filter((c) => c.source === 'session' && (c.session?.sessionKind === 'claude-code' || c.session?.sessionKind === 'codex-cli'))
+  const activeLocalRows = localRows.filter((c) => c.session?.active)
+  const inactiveLocalRows = localRows.filter((c) => !c.session?.active)
 
   function renderConversationItem(conv: Conversation) {
     const displayName = conv.name || conv.id.replace('agent_', '')
     const isSessionRow = conv.id.startsWith('session:')
-    const isActive = activeConversation === conv.id
+    const isSelected = activeConversation === conv.id
+    const isEditing = editingId === conv.id
 
     return (
       <Button
         key={conv.id}
         onClick={() => handleSelect(conv.id)}
+        onDoubleClick={() => { if (conv.session?.prefKey) startRename(conv) }}
+        onContextMenu={(e) => handleContextMenu(e, conv)}
         variant="ghost"
         className={`w-full justify-start h-auto px-3 py-2.5 rounded-none ${
-          isActive
+          isSelected
             ? 'bg-accent/60 border-l-2 border-primary'
             : 'border-l-2 border-transparent'
         }`}
@@ -174,6 +300,9 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
             <div className="w-7 h-7 rounded-full bg-surface-2 flex items-center justify-center text-[10px] font-bold text-muted-foreground">
               {displayName.charAt(0).toUpperCase()}
             </div>
+            {isSessionRow && conv.session?.active && (
+              <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-card ${STATUS_COLORS.busy}`} />
+            )}
             {!isSessionRow && (
               <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-card ${STATUS_COLORS.offline}`} />
             )}
@@ -185,9 +314,30 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
                 {conv.session?.colorTag && TAG_COLORS[conv.session.colorTag] && (
                   <span className={`h-2 w-2 rounded-full ${TAG_COLORS[conv.session.colorTag]}`} />
                 )}
-                <span className="text-xs font-medium text-foreground truncate">
-                  {displayName}
-                </span>
+                {isSessionRow && conv.session?.sessionKind && conv.session.sessionKind !== 'gateway' && (
+                  <span className={`rounded px-1 py-px text-[9px] font-medium ${conv.session.sessionKind === 'codex-cli' ? 'bg-amber-500/15 text-amber-400/80' : 'bg-primary/15 text-primary/80'}`}>
+                    {conv.session.sessionKind === 'codex-cli' ? 'CX' : 'CC'}
+                  </span>
+                )}
+                {isEditing ? (
+                  <input
+                    ref={editInputRef}
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    onBlur={() => commitRename(conv)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); commitRename(conv) }
+                      if (e.key === 'Escape') { setEditingId(null) }
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    maxLength={80}
+                    className="w-full bg-surface-1 rounded px-1 py-0.5 text-xs font-medium text-foreground outline-none ring-1 ring-primary/40"
+                  />
+                ) : (
+                  <span className="text-xs font-medium text-foreground truncate">
+                    {displayName}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1 flex-shrink-0 ml-1">
                 {conv.unreadCount > 0 && (
@@ -200,7 +350,7 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
                 </span>
               </div>
             </div>
-            {conv.lastMessage && (
+            {conv.lastMessage && !isEditing && (
               <p className="text-[11px] text-muted-foreground/60 truncate mt-0.5">
                 {conv.lastMessage.from_agent === 'human'
                   ? `You: ${conv.lastMessage.content}`
@@ -243,33 +393,91 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
           </div>
         ) : (
           <>
-            {dashboardMode === 'local' && claudeRows.length > 0 && (
+            {dashboardMode === 'local' && activeLocalRows.length > 0 && (
               <div>
-                <div className="px-3 pt-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground/60">
-                  Claude Sessions
+                <div className="px-3 pt-2 py-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-green-400/70">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+                  Active
                 </div>
-                {claudeRows.map(renderConversationItem)}
+                {activeLocalRows.map(renderConversationItem)}
               </div>
             )}
-            {dashboardMode === 'local' && codexRows.length > 0 && (
+            {dashboardMode === 'local' && inactiveLocalRows.length > 0 && (
               <div>
-                <div className="px-3 pt-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground/60">
-                  Codex Sessions
+                <div className="px-3 pt-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground/40">
+                  Recent
                 </div>
-                {codexRows.map(renderConversationItem)}
+                {inactiveLocalRows.map(renderConversationItem)}
               </div>
             )}
-            {isGatewayMode && gatewayRows.length > 0 && (
+            {isGatewayMode && activeGatewayRows.length > 0 && (
               <div>
-                <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground/60">
-                  Gateway Sessions
+                <div className="px-3 pt-2 py-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-green-400/70">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+                  Active
                 </div>
-                {gatewayRows.map(renderConversationItem)}
+                {activeGatewayRows.map(renderConversationItem)}
+              </div>
+            )}
+            {isGatewayMode && inactiveGatewayRows.length > 0 && (
+              <div>
+                <div className="px-3 pt-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground/40">
+                  Recent
+                </div>
+                {inactiveGatewayRows.map(renderConversationItem)}
               </div>
             )}
           </>
         )}
       </div>
+
+      {/* Context menu */}
+      {ctxMenu && (() => {
+        const conv = conversations.find((c) => c.id === ctxMenu.convId)
+        if (!conv?.session?.prefKey) return null
+        return (
+          <div
+            ref={ctxMenuRef}
+            className="fixed z-50 min-w-[180px] rounded-lg border border-border bg-card p-1 shadow-xl"
+            style={{ top: ctxMenu.y, left: ctxMenu.x }}
+          >
+            <button
+              onClick={() => startRename(conv)}
+              className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-xs text-foreground hover:bg-accent/60"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z" />
+              </svg>
+              Rename
+            </button>
+            <div className="my-1 border-t border-border/50" />
+            <div className="px-2.5 py-1.5">
+              <div className="mb-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/60">Color</div>
+              <div className="flex flex-wrap gap-1.5">
+                {COLOR_OPTIONS.map((opt) => {
+                  const isCurrentColor = (conv.session?.colorTag || '') === opt.value
+                  return (
+                    <button
+                      key={opt.value}
+                      onClick={() => setColor(conv, opt.value)}
+                      title={opt.label}
+                      className={`h-5 w-5 rounded-full border-2 transition-transform hover:scale-110 ${
+                        isCurrentColor ? 'border-foreground scale-110' : 'border-transparent'
+                      } ${opt.value ? TAG_COLORS[opt.value] || 'bg-muted' : 'bg-muted/50'}`}
+                    >
+                      {!opt.value && (
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="m-auto text-muted-foreground/60">
+                          <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+                        </svg>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

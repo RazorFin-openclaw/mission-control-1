@@ -13,6 +13,7 @@ export default function LoginPage() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [pendingApproval, setPendingApproval] = useState(false)
   const [loading, setLoading] = useState(false)
   const [googleReady, setGoogleReady] = useState(false)
   const router = useRouter()
@@ -29,7 +30,14 @@ export default function LoginPage() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
+      if (data.code === 'PENDING_APPROVAL') {
+        setPendingApproval(true)
+        setError('')
+        setLoading(false)
+        return false
+      }
       setError(data.error || 'Login failed')
+      setPendingApproval(false)
       setLoading(false)
       return false
     }
@@ -108,7 +116,30 @@ export default function LoginPage() {
           <p className="text-sm text-muted-foreground mt-1">Sign in to continue</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        {pendingApproval && (
+          <div className="mb-4 p-4 rounded-lg bg-amber-500/10 border border-amber-500/20 text-center">
+            <div className="flex justify-center mb-2">
+              <svg className="w-8 h-8 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12,6 12,12 16,14" />
+              </svg>
+            </div>
+            <div className="text-sm font-medium text-amber-200">Access Request Submitted</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Your request has been sent to an administrator for review. You&apos;ll be able to sign in once approved.
+            </p>
+            <Button
+              onClick={() => { setPendingApproval(false); setError('') }}
+              variant="ghost"
+              size="sm"
+              className="mt-3 text-xs"
+            >
+              Try again
+            </Button>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className={`space-y-4 ${pendingApproval ? 'opacity-50 pointer-events-none' : ''}`}>
           {error && (
             <div role="alert" className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
               {error}
@@ -169,7 +200,7 @@ export default function LoginPage() {
           <div className="h-px flex-1 bg-border" />
         </div>
 
-        <div className="flex justify-center">
+        <div className={`flex justify-center ${pendingApproval ? 'opacity-50 pointer-events-none' : ''}`}>
           {googleClientId ? (
             <div className="min-h-[44px]" ref={googleBtnRef} />
           ) : (

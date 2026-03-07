@@ -105,21 +105,60 @@ function readClaudeTranscript(sessionId: string, limit: number): TranscriptMessa
 
       const ts = typeof parsed?.timestamp === 'string' ? parsed.timestamp : undefined
       if (parsed?.type === 'user') {
-        const content = typeof parsed?.message?.content === 'string'
-          ? parsed.message.content
-          : Array.isArray(parsed?.message?.content)
-            ? parsed.message.content.map((b: any) => b?.text || '').join('\n').trim()
-            : ''
-        pushMessage(out, 'user', content, ts)
+        const rawContent = parsed?.message?.content
+        // Check if this is a tool_result array (not real user input)
+        if (Array.isArray(rawContent) && rawContent.some((b: any) => b?.type === 'tool_result')) {
+          const parts: MessageContentPart[] = []
+          for (const block of rawContent) {
+            if (block?.type === 'tool_result') {
+              const resultContent = typeof block.content === 'string'
+                ? block.content
+                : Array.isArray(block.content)
+                  ? block.content.map((c: any) => c?.text || '').join('\n')
+                  : ''
+              if (resultContent.trim()) {
+                parts.push({
+                  type: 'tool_result',
+                  toolUseId: block.tool_use_id || '',
+                  content: resultContent.trim().slice(0, 8000),
+                  isError: block.is_error === true,
+                })
+              }
+            }
+          }
+          pushMessage(out, 'system', parts, ts)
+        } else {
+          const content = typeof rawContent === 'string'
+            ? rawContent
+            : Array.isArray(rawContent)
+              ? rawContent.map((b: any) => b?.text || '').join('\n').trim()
+              : ''
+          const part = textPart(content)
+          if (part) pushMessage(out, 'user', [part], ts)
+        }
       } else if (parsed?.type === 'assistant') {
-        const content = Array.isArray(parsed?.message?.content)
-          ? parsed.message.content
-              .filter((b: any) => b?.type === 'text' && typeof b?.text === 'string')
-              .map((b: any) => b.text)
-              .join('\n')
-              .trim()
-          : ''
-        pushMessage(out, 'assistant', content, ts)
+        const parts: MessageContentPart[] = []
+        if (Array.isArray(parsed?.message?.content)) {
+          for (const block of parsed.message.content) {
+            if (block?.type === 'thinking' && typeof block?.thinking === 'string') {
+              const thinking = block.thinking.trim()
+              if (thinking) {
+                parts.push({ type: 'thinking', thinking: thinking.slice(0, 4000) })
+              }
+            } else if (block?.type === 'text' && typeof block?.text === 'string') {
+              const part = textPart(block.text)
+              if (part) parts.push(part)
+            } else if (block?.type === 'tool_use') {
+              parts.push({
+                type: 'tool_use',
+                id: block.id || '',
+                name: block.name || 'unknown',
+                input: JSON.stringify(block.input || {}).slice(0, 500),
+              })
+            }
+          }
+        }
+        pushMessage(out, 'assistant', parts, ts)
       }
     }
   }
@@ -159,14 +198,29 @@ function readCodexTranscript(sessionId: string, limit: number): TranscriptMessag
       if (!matchedSession) continue
 
       const ts = typeof parsed?.timestamp === 'string' ? parsed.timestamp : undefined
-      if (parsed?.type === 'response_item' && parsed?.payload?.type === 'message') {
-        const role = parsed?.payload?.role === 'assistant' ? 'assistant' : 'user'
-        const content = typeof parsed?.payload?.content === 'string'
-          ? parsed.payload.content
-          : Array.isArray(parsed?.payload?.content)
-            ? parsed.payload.content.map((b: any) => b?.text || '').join('\n').trim()
-            : ''
-        pushMessage(out, role, content, ts)
+      if (parsed?.type === 'response_item') {
+        const payload = parsed?.payload
+        if (payload?.type === 'message') {
+          const role = payload?.role === 'assistant' ? 'assistant' as const : 'user' as const
+          const parts: MessageContentPart[] = []
+          if (typeof payload?.content === 'string') {
+            const part = textPart(payload.content)
+            if (part) parts.push(part)
+          } else if (Array.isArray(payload?.content)) {
+            for (const block of payload.content) {
+              const blockType = String(block?.type || '')
+              // Codex CLI emits message content as input_text/output_text.
+              if (
+                (blockType === 'text' || blockType === 'input_text' || blockType === 'output_text')
+                && typeof block?.text === 'string'
+              ) {
+                const part = textPart(block.text)
+                if (part) parts.push(part)
+              }
+            }
+          }
+          pushMessage(out, role, parts, ts)
+        }
       }
     }
   }
