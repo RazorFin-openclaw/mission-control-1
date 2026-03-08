@@ -3,6 +3,7 @@ import { getDatabase, db_helpers } from '@/lib/db';
 import { requireRole } from '@/lib/auth';
 import { logger } from '@/lib/logger';
 import { resolveTaskImplementationTarget } from '@/lib/task-routing';
+import { buildHeartbeatPreemptionPolicy } from '@/lib/heartbeat-preemption';
 
 /**
  * GET /api/agents/[id]/heartbeat - Agent heartbeat check
@@ -82,6 +83,12 @@ export async function GET(
       LIMIT 10
     `).all(agent.name, workspaceId) as any[];
 
+    const preemptionPolicy = buildHeartbeatPreemptionPolicy(
+      assignedTasks
+        .filter((task: any) => task.status === 'assigned' || task.status === 'in_progress')
+        .map((task: any) => ({ id: task.id, status: task.status }))
+    );
+
     if (assignedTasks.length > 0) {
       workItems.push({
         type: 'assigned_tasks',
@@ -93,7 +100,8 @@ export async function GET(
           priority: t.priority,
           due_date: t.due_date,
           ...resolveTaskImplementationTarget(t),
-        }))
+        })),
+        preemption_policy: preemptionPolicy,
       });
     }
     
@@ -166,6 +174,7 @@ export async function GET(
       agent: agent.name,
       checked_at: now,
       work_items: workItems,
+      preemption_policy: preemptionPolicy,
       total_items: workItems.reduce((sum, item) => sum + item.count, 0)
     });
     
