@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase, db_helpers } from '@/lib/db';
 import { requireRole } from '@/lib/auth';
 import { logger } from '@/lib/logger';
+import { resolveTaskImplementationTarget } from '@/lib/task-routing';
+import { buildHeartbeatPreemptionPolicy } from '@/lib/heartbeat-preemption';
 
 /**
  * GET /api/agents/[id]/heartbeat - Agent heartbeat check
@@ -81,7 +83,7 @@ export async function GET(
       AND status IN ('assigned', 'in_progress')
       ORDER BY priority DESC, created_at ASC
       LIMIT 10
-    `).all(agent.name, workspaceId);
+    `).all(agent.name, workspaceId) as any[];
 
     const assignedOnlyTasks = assignedTasks.filter((t: any) => t.status === 'assigned').map((t: any) => ({
       id: t.id,
@@ -99,6 +101,12 @@ export async function GET(
       due_date: t.due_date
     }));
 
+    const preemptionPolicy = buildHeartbeatPreemptionPolicy(
+      assignedTasks
+        .filter((task: any) => task.status === 'assigned' || task.status === 'in_progress')
+        .map((task: any) => ({ id: task.id, status: task.status }))
+    );
+
     if (assignedTasks.length > 0) {
       workItems.push({
         type: 'assigned_tasks',
@@ -108,8 +116,10 @@ export async function GET(
           title: t.title,
           status: t.status,
           priority: t.priority,
-          due_date: t.due_date
-        }))
+          due_date: t.due_date,
+          ...resolveTaskImplementationTarget(t),
+        })),
+        preemption_policy: preemptionPolicy,
       });
     }
     
@@ -190,6 +200,7 @@ export async function GET(
       in_progress_tasks: inProgressTasks,
       has_actionable_work: assignedOnlyTasks.length > 0 || inProgressTasks.length > 0,
       work_items: workItems,
+      preemption_policy: preemptionPolicy,
       total_items: workItems.reduce((sum, item) => sum + item.count, 0)
     });
     
