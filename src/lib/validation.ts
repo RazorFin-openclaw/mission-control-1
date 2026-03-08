@@ -31,11 +31,14 @@ const taskMetadataSchema = z.object({
   code_location: z.string().min(1, 'code_location cannot be empty').max(500).optional(),
 }).catchall(z.unknown())
 
+const taskStatusSchema = z.enum(['inbox', 'assigned', 'in_progress', 'review', 'quality_review', 'done'])
+const taskPrioritySchema = z.enum(['critical', 'high', 'medium', 'low'])
+
 export const createTaskSchema = z.object({
   title: z.string().min(1, 'Title is required').max(500),
   description: z.string().max(5000).optional(),
-  status: z.enum(['inbox', 'assigned', 'in_progress', 'review', 'quality_review', 'done']).default('inbox'),
-  priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
+  status: taskStatusSchema.default('inbox'),
+  priority: taskPrioritySchema.default('medium'),
   project_id: z.number().int().positive().optional(),
   assigned_to: z.string().max(100).optional(),
   due_date: z.number().optional(),
@@ -52,7 +55,26 @@ export const createTaskSchema = z.object({
   metadata: taskMetadataSchema.default({} as Record<string, unknown>),
 })
 
-export const updateTaskSchema = createTaskSchema.partial()
+export const updateTaskSchema = z.object({
+  title: z.string().min(1, 'Title is required').max(500).optional(),
+  description: z.string().max(5000).optional(),
+  status: taskStatusSchema.optional(),
+  priority: taskPrioritySchema.optional(),
+  project_id: z.number().int().positive().optional(),
+  assigned_to: z.string().max(100).optional(),
+  due_date: z.number().optional(),
+  estimated_hours: z.number().min(0).optional(),
+  actual_hours: z.number().min(0).optional(),
+  outcome: z.enum(['success', 'failed', 'partial', 'abandoned']).optional(),
+  error_message: z.string().max(5000).optional(),
+  resolution: z.string().max(5000).optional(),
+  feedback_rating: z.number().int().min(1).max(5).optional(),
+  feedback_notes: z.string().max(5000).optional(),
+  retry_count: z.number().int().min(0).optional(),
+  completed_at: z.number().optional(),
+  tags: z.array(z.string()).optional(),
+  metadata: taskMetadataSchema.optional(),
+})
 
 export const createAgentSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100),
