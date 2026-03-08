@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   createTaskSchema,
+  updateTaskSchema,
   createAgentSchema,
   createWebhookSchema,
   createAlertSchema,
@@ -82,6 +83,28 @@ describe('createTaskSchema', () => {
       },
     })
     expect(result.success).toBe(false)
+  })
+})
+
+describe('updateTaskSchema', () => {
+  it('does not backfill defaults for omitted fields', () => {
+    const result = updateTaskSchema.safeParse({ status: 'in_progress' })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.status).toBe('in_progress')
+      expect('priority' in result.data).toBe(false)
+      expect('tags' in result.data).toBe(false)
+      expect('metadata' in result.data).toBe(false)
+    }
+  })
+
+  it('accepts explicit tags and metadata when provided', () => {
+    const result = updateTaskSchema.safeParse({
+      status: 'assigned',
+      tags: ['planning-cycle'],
+      metadata: { implementation_repo: 'RazorFin-openclaw/mission-control-1' },
+    })
+    expect(result.success).toBe(true)
   })
 })
 
