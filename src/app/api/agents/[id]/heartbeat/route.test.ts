@@ -22,7 +22,8 @@ vi.mock('@/lib/db', () => ({
   })),
   db_helpers: {
     getPendingNotifications: vi.fn(() => [
-      { id: 3, type: 'comment', title: 'Comment', message: 'x', created_at: 123, source_type: 'comment', source_id: 77 },
+      { id: 3, type: 'comment', title: 'Comment', message: 'x', created_at: 123, source_type: 'comment', source_id: 77, task_id: 10 },
+      { id: 4, type: 'status_change', title: 'Status', message: 'y', created_at: 124, source_type: 'task', source_id: 11, task_id: 11 },
     ]),
     updateAgentStatus: mockUpdateAgentStatus,
     logActivity: mockLogActivity,
@@ -62,5 +63,7 @@ describe('GET /api/agents/[id]/heartbeat', () => {
     expect(body.has_actionable_work).toBe(true)
     const notifications = body.work_items.find((w: any) => w.type === 'notifications')
     expect(notifications.items[0].comment_id).toBe(77)
+    expect(notifications.items[0].task_id).toBe(10)
+    expect(notifications.items[1].task_id).toBe(11)
   })
 })

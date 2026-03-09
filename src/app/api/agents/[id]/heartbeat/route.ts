@@ -125,20 +125,31 @@ export async function GET(
     
     // 3. Check for unread notifications
     const notifications = db_helpers.getPendingNotifications(agent.name, workspaceId);
+    const commentTaskLookup = db.prepare('SELECT task_id FROM comments WHERE id = ? AND workspace_id = ? LIMIT 1');
 
     if (notifications.length > 0) {
       workItems.push({
         type: 'notifications',
         count: notifications.length,
-        items: notifications.slice(0, 5).map(n => ({
-          id: n.id,
-          type: n.type,
-          title: n.title,
-          message: n.message,
-          created_at: n.created_at,
-          task_id: n.source_type === 'task' ? n.source_id : null,
-          comment_id: n.source_type === 'comment' ? n.source_id : null,
-        }))
+        items: notifications.slice(0, 5).map((n: any) => {
+          const derivedTaskId =
+            n.task_id ??
+            (n.source_type === 'task'
+              ? n.source_id
+              : n.source_type === 'comment'
+                ? (commentTaskLookup.get(n.source_id, workspaceId) as { task_id?: number } | undefined)?.task_id ?? null
+                : null);
+
+          return {
+            id: n.id,
+            type: n.type,
+            title: n.title,
+            message: n.message,
+            created_at: n.created_at,
+            task_id: derivedTaskId,
+            comment_id: n.source_type === 'comment' ? n.source_id : null,
+          };
+        })
       });
     }
     
