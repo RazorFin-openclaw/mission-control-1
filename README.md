@@ -437,6 +437,51 @@ pnpm build
 OPENCLAW_CONFIG_PATH=/path/to/.openclaw/openclaw.json OPENCLAW_STATE_DIR=/path/to/.openclaw pnpm start
 ```
 
+## Mission Control API watchdog (RF-118)
+
+Use this when you want MC API availability on `127.0.0.1:3000` to recover automatically after hard failure.
+
+### One-time setup
+
+1. Ensure Node has execute permission for the watchdog script:
+
+```bash
+chmod +x /path/to/mission-control/scripts/watchdog.mjs
+```
+
+2. Set environment variables (choose values for your deployment):
+
+```bash
+export MC_WATCHDOG_HEALTH_URL="http://127.0.0.1:3000/api/agents/hammerhead/heartbeat"
+export MC_WATCHDOG_API_KEY="<same API_KEY as MC"
+export MC_WATCHDOG_RESTART_COMMAND="openclaw gateway restart"
+export MC_WATCHDOG_FAILURE_THRESHOLD="3"                # number of misses before restart
+export MC_WATCHDOG_PROBE_TIMEOUT_MS="1500"               # socket timeout
+export MC_WATCHDOG_RECOVERY_WINDOW_MS="30000"            # recovery wait window
+export MC_WATCHDOG_STATE_PATH="/path/to/mission-control/.data/watchdog-state.json"
+export MC_WATCHDOG_LOG_PATH="/path/to/mission-control/.data/watchdog-recovery.log"
+```
+
+3. Start with a scheduler (one minute interval recommended):
+
+```bash
+* * * * * /usr/bin/env bash -lc 'cd /path/to/mission-control && node scripts/watchdog.mjs >> .data/watchdog-cron.log 2>&1'
+```
+
+### Verification
+
+- A healthy API writes `watchdog_healthy` lines to the log.
+- After repeated failures, logs show: `watchdog_unhealthy` and `watchdog_recovery_triggered`.
+- If restart succeeds and probe returns `200`, logs show `watchdog_recovery_success`.
+- Recovery proof command:
+
+```bash
+curl -s -H "x-api-key: $MC_WATCHDOG_API_KEY" "$MC_WATCHDOG_HEALTH_URL" \
+  | jq '{status, total_items: .total_items, assigned_tasks: .assigned_tasks, in_progress_tasks: .in_progress_tasks}'
+```
+
+Runbook status expected: after recovery, heartbeat for an active agent should resume (`status: "HEARTBEAT_OK"` or `"WORK_ITEMS_FOUND"`) with HTTP 200.
+
 Network access is restricted by default in production. Set `MC_ALLOWED_HOSTS` (comma-separated) or `MC_ALLOW_ANY_HOST=1` to control access.
 
 ## Development
