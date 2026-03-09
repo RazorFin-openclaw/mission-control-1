@@ -70,7 +70,12 @@ export async function GET(request: NextRequest) {
 
     // Parse query parameters
     const status = searchParams.get('status');
-    const assigned_to = searchParams.get('assigned_to');
+    const assignedToParam = searchParams.get('assigned_to');
+    const assigneeParam = searchParams.get('assignee');
+    if (assignedToParam && assigneeParam && assignedToParam !== assigneeParam) {
+      return NextResponse.json({ error: 'assigned_to and assignee query params must match when both are provided' }, { status: 400 });
+    }
+    const assigned_to = assignedToParam ?? assigneeParam;
     const priority = searchParams.get('priority');
     const projectIdParam = Number.parseInt(searchParams.get('project_id') || '', 10);
     const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 200);

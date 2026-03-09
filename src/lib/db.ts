@@ -243,6 +243,7 @@ export interface Notification {
   message: string;
   source_type?: string;
   source_id?: number;
+  task_id?: number;
   read_at?: number;
   delivered_at?: number;
   created_at: number;
@@ -445,12 +446,23 @@ export const db_helpers = {
   getPendingNotifications: (recipient: string, workspaceId: number = 1): Notification[] => {
     const db = getDatabase();
     const stmt = db.prepare(`
-      SELECT * FROM notifications
-      WHERE recipient = ?
-      AND read_at IS NULL
-      AND delivered_at IS NULL
-      AND workspace_id = ?
-      ORDER BY created_at DESC
+      SELECT
+        n.*,
+        CASE
+          WHEN n.source_type = 'task' THEN n.source_id
+          WHEN n.source_type = 'comment' THEN c.task_id
+          ELSE NULL
+        END AS task_id
+      FROM notifications n
+      LEFT JOIN comments c
+        ON c.id = n.source_id
+        AND n.source_type = 'comment'
+        AND c.workspace_id = n.workspace_id
+      WHERE n.recipient = ?
+      AND n.read_at IS NULL
+      AND n.delivered_at IS NULL
+      AND n.workspace_id = ?
+      ORDER BY n.created_at DESC
     `);
 
     return stmt.all(recipient, workspaceId) as Notification[];
